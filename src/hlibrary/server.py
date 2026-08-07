@@ -31,6 +31,10 @@ class ApiServer:
             port=port,
             log_level="info",
             access_log=False,
+            # PyInstaller 使用 console=False 生成 Windows GUI 程序时，
+            # sys.stdout/sys.stderr 都是 None。Uvicorn 的默认彩色日志
+            # 格式化器会调用 stdout.isatty()，导致程序启动即崩溃。
+            log_config=None,
         )
         self._server = uvicorn.Server(config)
         self._thread: threading.Thread | None = None
