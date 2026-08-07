@@ -1,5 +1,6 @@
 .venv/
 .tools/
+packaging/ChineseSimplified.isl
 __pycache__/
 *.py[cod]
 *.egg-info/

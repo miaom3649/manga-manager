@@ -22,4 +22,13 @@ $Iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
 if (-not (Test-Path $Iscc)) {
     throw "Inno Setup 6 not found: $Iscc"
 }
+$LanguageFile = Join-Path $ProjectRoot "packaging\ChineseSimplified.isl"
+if (-not (Test-Path $LanguageFile)) {
+    Invoke-WebRequest `
+        -Uri "https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/ChineseSimplified.isl" `
+        -OutFile $LanguageFile
+}
+if ((Get-Item $LanguageFile).Length -lt 10000) {
+    throw "Downloaded Inno Setup language file is incomplete"
+}
 & $Iscc packaging/HLibrary.iss

@@ -53,6 +53,16 @@ jobs:
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
 
+      - name: Download official Simplified Chinese installer messages
+        shell: pwsh
+        run: |
+          Invoke-WebRequest `
+            -Uri "https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/ChineseSimplified.isl" `
+            -OutFile "packaging/ChineseSimplified.isl"
+          if ((Get-Item "packaging/ChineseSimplified.isl").Length -lt 10000) {
+            throw "Downloaded Inno Setup language file is incomplete"
+          }
+
       - name: Build installer
         run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" packaging/HLibrary.iss'
 

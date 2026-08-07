@@ -43,6 +43,8 @@ if ($process.ExitCode -ne 0) { throw "Windows 成品自检失败" }
 
 安装包输出到 `build-output/installer`。
 
+构建脚本会从 Inno Setup 官方源码仓库取得简体中文安装界面翻译；该翻译不包含在 Chocolatey 安装的 Inno Setup 中，因此手工直接运行 `ISCC.exe` 前也必须先运行构建脚本。
+
 ## 发布验收
 
 - 在 Windows 10 和 Windows 11 分别验证安装、覆盖升级、托盘、彻底退出与卸载数据选择。

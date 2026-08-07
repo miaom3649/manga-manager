@@ -22,7 +22,9 @@ ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#MyAppName}
 
 [Languages]
-Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+; 简体中文属于 Inno Setup 的贡献翻译，不随 Chocolatey 安装包附带。
+; 构建脚本会从 Inno Setup 官方源码仓库下载到本文件旁边。
+Name: "chinesesimp"; MessagesFile: "ChineseSimplified.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加图标："; Flags: unchecked
