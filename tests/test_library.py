@@ -22,6 +22,12 @@ def write_comic(path: Path, color: str = "red") -> None:
         archive.writestr("002.webp", image_bytes("blue"))
 
 
+def write_padded_comic_out_of_order(path: Path) -> None:
+    with ZipFile(path, "w", ZIP_DEFLATED) as archive:
+        archive.writestr("00007.webp", image_bytes("red"))
+        archive.writestr("00001.webp", image_bytes("blue"))
+
+
 def build_library(tmp_path: Path) -> tuple[Database, LibraryService, Path]:
     database = Database(tmp_path / "data.db")
     database.initialize("test")
@@ -51,6 +57,22 @@ def test_scan_collects_comics_and_illustrations(tmp_path: Path) -> None:
     second = library.scan()
     assert second.added == []
     assert second.invalid == []  # unchanged invalid files do not notify repeatedly
+    database.close()
+
+
+def test_scan_uses_naturally_first_image_and_repairs_legacy_default(tmp_path: Path) -> None:
+    database, library, root = build_library(tmp_path)
+    write_padded_comic_out_of_order(root / "123.zip")
+
+    library.scan()
+    work = library.list_works()[0]
+    assert work.cover_member == "00001.webp"
+
+    # 模拟旧版本按 ZIP 内部存储顺序选择了第一张图。
+    with database.session() as session:
+        session.get(Work, work.id).cover_member = "00007.webp"
+    library.scan()
+    assert library.list_works()[0].cover_member == "00001.webp"
     database.close()
 
 

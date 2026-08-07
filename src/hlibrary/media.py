@@ -51,18 +51,19 @@ class MediaService:
         return sorted(names, key=natural_key)
 
     def preview_members(self, work: Work) -> list[str]:
-        available = set(self.comic_members(work))
-        return [
-            name
-            for name in ("004.webp", "007.webp", "010.webp", "013.webp", "016.webp")
-            if name in available
-        ]
+        members = self.comic_members(work)
+        return [members[index] for index in (3, 6, 9, 12, 15) if index < len(members)]
 
     def read_original(self, work: Work, member: str | None = None) -> bytes:
         path = self.work_path(work)
         if work.kind == "illustration":
             return path.read_bytes()
-        selected = member or work.cover_member or "001.webp"
+        selected = member or work.cover_member
+        if selected is None:
+            members = self.comic_members(work)
+            if not members:
+                raise FileNotFoundError("漫画中没有可读取图片")
+            selected = members[0]
         with zipfile.ZipFile(path) as archive:
             return archive.read(selected)
 

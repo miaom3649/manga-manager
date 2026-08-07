@@ -21,7 +21,7 @@ from hlibrary.database import (
     ReadingProgress,
     Work,
 )
-from hlibrary.text import normalize_text
+from hlibrary.text import natural_key, normalize_text
 
 register_heif_opener()
 
@@ -79,12 +79,12 @@ def inspect_comic(path: Path) -> tuple[bool, str | None]:
         with zipfile.ZipFile(path) as archive:
             if any(info.flag_bits & 0x1 for info in archive.infolist()):
                 return False, None
-            members = [info for info in archive.infolist() if not info.is_dir()]
-            preferred = next((item for item in members if item.filename == "001.webp"), None)
-            ordered = ([preferred] if preferred else []) + [
-                item for item in members if item != preferred
-            ]
-            for info in ordered:
+            members = sorted(
+                (info for info in archive.infolist() if not info.is_dir()),
+                key=lambda item: natural_key(item.filename),
+            )
+            # 不依赖固定页码；按文件名自然升序后的第一张可读图片为封面。
+            for info in members:
                 try:
                     if _readable_image(archive.read(info)):
                         return True, info.filename
@@ -93,6 +93,18 @@ def inspect_comic(path: Path) -> tuple[bool, str | None]:
     except (OSError, zipfile.BadZipFile, zipfile.LargeZipFile):
         return False, None
     return False, None
+
+
+def _legacy_default_cover(path: Path) -> str | None:
+    """Return the archive-order cover selected by older H库 versions."""
+    try:
+        with zipfile.ZipFile(path) as archive:
+            for info in archive.infolist():
+                if not info.is_dir() and _readable_image(archive.read(info)):
+                    return info.filename
+    except (OSError, RuntimeError, zipfile.BadZipFile, zipfile.LargeZipFile):
+        return None
+    return None
 
 
 def inspect_illustration(path: Path) -> bool:
@@ -211,6 +223,14 @@ class LibraryService:
                 work = by_path.get(candidate.relative_path)
                 if work is not None:
                     unmatched_ids.discard(work.id)
+                    if (
+                        work.kind == "comic"
+                        and candidate.cover_member
+                        and work.cover_member != candidate.cover_member
+                        and work.cover_member == _legacy_default_cover(candidate.path)
+                    ):
+                        work.cover_member = candidate.cover_member
+                        work.updated_at = now
                     if (
                         work.file_size == candidate.file_size
                         and work.modified_ns == candidate.modified_ns

@@ -39,12 +39,14 @@ from hlibrary.config import APP_NAME
 from hlibrary.controller import LibraryController
 from hlibrary.desktop.dialogs import TagManagerDialog, WorkDetailDialog
 from hlibrary.desktop.pairing_dialog import PairingDialog
+from hlibrary.desktop.reader_dialog import ReaderDialog
 from hlibrary.desktop.upload_dialog import UploadDialog
 from hlibrary.library import LibraryService, ScanResult
 from hlibrary.media import MediaService
 from hlibrary.migration import MigrationService
 from hlibrary.notifications import NotificationService
 from hlibrary.pairing import PairingService
+from hlibrary.reader import ReaderService
 from hlibrary.upload import UploadService
 
 
@@ -164,7 +166,6 @@ class MainWindow(QMainWindow):
         filters = self._build_filter_panel()
         self.work_list = QListWidget()
         self.work_list.itemActivated.connect(self.open_work)
-        self.work_list.itemClicked.connect(self.open_work)
         page_row = QHBoxLayout()
         self.first_page = QPushButton("首页")
         self.previous_page = QPushButton("上一页")
@@ -545,9 +546,7 @@ class MainWindow(QMainWindow):
             )
             if answer == QMessageBox.Yes:
                 for work in self.catalog.find_by_file_names(details):
-                    dialog = WorkDetailDialog(work.id, self.catalog, self.media, self)
-                    dialog.saved.connect(self.refresh_works)
-                    dialog.exec()
+                    self.show_work_detail(work.id)
             return
         QMessageBox.information(self, "通知详情", text or "没有详细文件列表")
 
@@ -576,10 +575,9 @@ class MainWindow(QMainWindow):
             identity = work.number if work.kind == "comic" else work.file_name
             pending = " · 内容已替换，待确认" if work.status == "replacement_pending" else ""
             tag_names = [self.catalog.tag_display_name(tag, all_tags) for tag in work.tags]
-            item = QListWidgetItem(
-                f"{display_title}\n{identity or ''}\n{'  '.join(tag_names)}\n"
-                f"{'★' * work.rating}{pending}  [{kind}]"
-            )
+            # 作品内容完全由自定义 row_widget 绘制。列表项自身不能再带
+            # 旧版文本，否则部分 Windows 样式会把文字画在封面左侧。
+            item = QListWidgetItem()
             item.setData(Qt.UserRole, work.id)
             item.setSizeHint(QSize(0, 132))
             row_widget = QWidget()
@@ -670,9 +668,22 @@ class MainWindow(QMainWindow):
         work_id = item.data(Qt.UserRole)
         if work_id is None:
             return
-        dialog = WorkDetailDialog(work_id, self.catalog, self.media, self)
-        dialog.saved.connect(self.refresh_works)
-        dialog.exec()
+        self.show_work_detail(work_id)
+
+    def show_work_detail(self, work_id: int) -> None:
+        """Run details and reader sequentially so no hidden modal blocks the main window."""
+        while True:
+            requested: list[int] = []
+            dialog = WorkDetailDialog(work_id, self.catalog, self.media, self)
+            dialog.saved.connect(self.refresh_works)
+            dialog.reading_requested.connect(requested.append)
+            dialog.exec()
+            if not requested:
+                return
+            work = self.catalog.get_work(requested[0])
+            if work is None:
+                return
+            ReaderDialog(work, ReaderService(self.catalog.database, self.media), self).exec()
 
     def open_tag_manager(self) -> None:
         TagManagerDialog(self.catalog, self).exec()

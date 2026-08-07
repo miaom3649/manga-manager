@@ -23,9 +23,8 @@ from PySide6.QtWidgets import (
 
 from hlibrary.catalog import CatalogService
 from hlibrary.database import Tag, Work
-from hlibrary.desktop.reader_dialog import ReaderDialog, pixmap_from_bytes
+from hlibrary.desktop.reader_dialog import pixmap_from_bytes
 from hlibrary.media import MediaService
-from hlibrary.reader import ReaderService
 
 
 def _clear_layout(layout) -> None:
@@ -286,6 +285,7 @@ class TagManagerDialog(QDialog):
 
 class WorkDetailDialog(QDialog):
     saved = Signal()
+    reading_requested = Signal(int)
 
     def __init__(self, work_id: int, catalog: CatalogService, media: MediaService, parent=None):
         super().__init__(parent)
@@ -383,7 +383,8 @@ class WorkDetailDialog(QDialog):
 
     def start_reading(self) -> None:
         assert self.work is not None
-        ReaderDialog(self.work, ReaderService(self.catalog.database, self.media), self).exec()
+        self.reading_requested.emit(self.work.id)
+        self.accept()
 
     def show_large_preview(self, work: Work, member: str) -> None:
         try:

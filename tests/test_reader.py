@@ -55,3 +55,26 @@ def test_reader_natural_order_progress_and_mode(tmp_path) -> None:
     assert reader.progress(work).page_index == 2
     reader.set_preferred_mode("single")
     assert reader.preferred_mode() == "single"
+
+
+def test_previews_use_every_third_sorted_image(tmp_path) -> None:
+    database = Database(tmp_path / "preview.db")
+    database.initialize("test")
+    library = LibraryService(database)
+    root = library.configure_root(tmp_path / "library")
+    path = root / "456.zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        for number in range(16, 0, -1):
+            archive.writestr(f"{number:05}.webp", image_bytes())
+    library.scan()
+    work = library.list_works()[0]
+    media = MediaService(library, tmp_path / "cache")
+
+    assert work.cover_member == "00001.webp"
+    assert media.preview_members(work) == [
+        "00004.webp",
+        "00007.webp",
+        "00010.webp",
+        "00013.webp",
+        "00016.webp",
+    ]
