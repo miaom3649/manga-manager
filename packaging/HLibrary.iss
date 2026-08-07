@@ -34,6 +34,7 @@ Source: "..\dist\HLibrary\*"; DestDir: "{app}"; Flags: ignoreversion recursesubd
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+Name: "{group}\{#MyAppName}（调试）"; Filename: "{app}\HLibrary-Debug.exe"; Comment: "显示诊断日志窗口，仅用于测试"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]

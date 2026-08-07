@@ -49,6 +49,8 @@ jobs:
         run: |
           $process = Start-Process -FilePath "dist/HLibrary/HLibrary.exe" -ArgumentList "--version" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Packaged application smoke test failed with exit code $($process.ExitCode)" }
+          $debugProcess = Start-Process -FilePath "dist/HLibrary/HLibrary-Debug.exe" -ArgumentList "--version" -Wait -PassThru
+          if ($debugProcess.ExitCode -ne 0) { throw "Debug application smoke test failed with exit code $($debugProcess.ExitCode)" }
 
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y

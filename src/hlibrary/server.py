@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import threading
 from pathlib import Path
 
@@ -25,16 +26,17 @@ class ApiServer:
         pairing: PairingService | None = None,
         uploads: UploadService | None = None,
     ) -> None:
+        options: dict[str, object] = {
+            "host": host,
+            "port": port,
+            "log_level": "info",
+            "access_log": False,
+        }
+        # 正式版无控制台时禁用控制台日志；调试版有控制台时保留日志。
+        if sys.stdout is None or sys.stderr is None:
+            options["log_config"] = None
         config = uvicorn.Config(
-            create_api(web_root, library, catalog, media, pairing, uploads),
-            host=host,
-            port=port,
-            log_level="info",
-            access_log=False,
-            # PyInstaller 使用 console=False 生成 Windows GUI 程序时，
-            # sys.stdout/sys.stderr 都是 None。Uvicorn 的默认彩色日志
-            # 格式化器会调用 stdout.isatty()，导致程序启动即崩溃。
-            log_config=None,
+            create_api(web_root, library, catalog, media, pairing, uploads), **options
         )
         self._server = uvicorn.Server(config)
         self._thread: threading.Thread | None = None

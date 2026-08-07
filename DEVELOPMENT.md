@@ -43,6 +43,8 @@ if ($process.ExitCode -ne 0) { throw "Windows 成品自检失败" }
 
 安装包输出到 `build-output/installer`。
 
+安装后开始菜单有两个入口：`H库` 不显示控制台；`H库（调试）` 显示运行日志，供 Windows 测试和排错。两个入口共用同一套数据库和设置，请勿同时运行。
+
 构建脚本会从 Inno Setup 官方源码仓库取得简体中文安装界面翻译；该翻译不包含在 Chocolatey 安装的 Inno Setup 中，因此手工直接运行 `ISCC.exe` 前也必须先运行构建脚本。
 
 ## 发布验收

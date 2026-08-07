@@ -17,6 +17,10 @@ $Smoke = Start-Process -FilePath "dist\HLibrary\HLibrary.exe" -ArgumentList "--v
 if ($Smoke.ExitCode -ne 0) {
     throw "Packaged application smoke test failed with exit code $($Smoke.ExitCode)"
 }
+$DebugSmoke = Start-Process -FilePath "dist\HLibrary\HLibrary-Debug.exe" -ArgumentList "--version" -Wait -PassThru
+if ($DebugSmoke.ExitCode -ne 0) {
+    throw "Debug application smoke test failed with exit code $($DebugSmoke.ExitCode)"
+}
 
 $Iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
 if (-not (Test-Path $Iscc)) {

@@ -13,3 +13,9 @@ def test_server_can_be_created_without_console(monkeypatch) -> None:
     server = ApiServer("127.0.0.1", 18459)
 
     assert server._server.config.log_config is None
+
+
+def test_server_keeps_logging_with_console() -> None:
+    server = ApiServer("127.0.0.1", 18459)
+
+    assert server._server.config.log_config is not None
