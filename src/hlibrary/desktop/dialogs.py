@@ -351,7 +351,7 @@ class TagManagementChooserDialog(FloatingCardDialog):
             button.setFixedSize(220, 150)
             button.setStyleSheet(
                 "QPushButton { background: transparent; color: palette(button-text); "
-                "border: 2px solid #6750a4; border-radius: 18px; "
+                "border: 2px solid #9a6f7b; border-radius: 18px; "
                 "font-size: 20px; font-weight: 700; } "
                 "QPushButton:hover { background: palette(midlight); }"
             )
@@ -505,7 +505,7 @@ class WorkDetailDialog(FloatingCardDialog):
                 self.catalog.tag_display_name(tag, tags),
                 AUTHOR_TAG_COLOR
                 if self.catalog.is_author_tag(tag)
-                else "#6750a4"
+                else "#9a6f7b"
                 if tag.group_id is not None
                 else "#777",
                 tag_sort_category(
@@ -519,7 +519,7 @@ class WorkDetailDialog(FloatingCardDialog):
         ]
         custom_tag_entries.sort(key=lambda entry: entry[2])
         tag_entries = [
-            ("漫画" if work.kind == "comic" else "插画", "#006a6a", 3, None),
+            ("漫画" if work.kind == "comic" else "插画", "#4f7c78", 3, None),
             *custom_tag_entries,
         ]
         tag_items: list[tuple[QLabel, int]] = []
@@ -583,8 +583,8 @@ class WorkDetailDialog(FloatingCardDialog):
                 self.root.addWidget(QLabel("暂无预览图"))
             read = QPushButton("开始阅读")
             read.setStyleSheet(
-                "QPushButton { background: #6750a4; color: white; "
-                "border: 2px solid #6750a4; border-radius: 10px; "
+                "QPushButton { background: #9a6f7b; color: white; "
+                "border: 2px solid #9a6f7b; border-radius: 10px; "
                 "font-weight: 700; padding: 8px 12px; }"
             )
             read.clicked.connect(self.start_reading)
@@ -698,8 +698,8 @@ class WorkDetailDialog(FloatingCardDialog):
             self.root.addWidget(cover)
         save = QPushButton("保存")
         save.setStyleSheet(
-            "QPushButton { background: #6750a4; color: white; "
-            "border: 2px solid #6750a4; border-radius: 10px; "
+            "QPushButton { background: #9a6f7b; color: white; "
+            "border: 2px solid #9a6f7b; border-radius: 10px; "
             "font-weight: 700; padding: 8px 12px; }"
         )
         save.clicked.connect(self.save)
@@ -736,7 +736,7 @@ class WorkDetailDialog(FloatingCardDialog):
             color = (
                 AUTHOR_TAG_COLOR
                 if self.catalog.is_author_tag(tag)
-                else "#6750a4"
+                else "#9a6f7b"
                 if tag.group_id is not None
                 else "#777"
             )

@@ -372,8 +372,8 @@ class MainWindow(QMainWindow):
         bar.setObjectName("mainThemeBar")
         bar.setFixedHeight(66)
         bar.setStyleSheet(
-            "QWidget#mainThemeBar { background: #25212b; "
-            "border-bottom: 3px solid #00a6a6; } "
+            "QWidget#mainThemeBar { background: #704846; "
+            "border-bottom: 3px solid #a86f68; } "
             "QPushButton#brandButton { border: none; padding: 4px 8px; "
             "font-size: 20px; font-weight: 700; text-align: left; color: #f5f1f8; }"
         )
@@ -533,7 +533,7 @@ class MainWindow(QMainWindow):
             button.setCheckable(True)
             self.kind_filter_group.addButton(button)
             button.setChecked(kind in self.selected_kinds)
-            button.setStyleSheet(self._tag_button_style("#006a6a"))
+            button.setStyleSheet(self._tag_button_style("#4f7c78"))
             button.toggled.connect(lambda checked, value=kind: self._kind_toggled(value, checked))
             self.tag_filter_layout.addWidget(button, 0, column)
         self.custom_tag_buttons: list[QPushButton] = []
@@ -573,6 +573,7 @@ class MainWindow(QMainWindow):
     def _refresh_filter_tags(self) -> None:
         for button in self.custom_tag_buttons:
             self.tag_filter_layout.removeWidget(button)
+            button.hide()
             button.deleteLater()
         self.custom_tag_buttons.clear()
         system_search = self.tag_search.text().strip().casefold()
@@ -580,20 +581,23 @@ class MainWindow(QMainWindow):
         self.illustration_filter.setVisible(not system_search or system_search in "插画".casefold())
         all_tags = self.catalog.list_tags()
         classified_tags = []
+        show_all_authors = system_search == "作者".casefold()
         for tag in self.catalog.list_tags(self.tag_search.text()):
-            display_name = self.catalog.tag_display_name(tag, all_tags)
             author = self.catalog.is_author_tag(tag)
+            if author and not show_all_authors and tag.id not in self.selected_tag_ids:
+                continue
+            display_name = self.catalog.tag_display_name(tag, all_tags)
             category = tag_sort_category(
                 display_name,
                 self.tag_search.fontMetrics(),
                 author=author,
             )
             long_tag = is_long_tag_category(category)
-            classified_tags.append((category, tag, display_name, long_tag))
+            classified_tags.append((category, tag, display_name, long_tag, author))
         classified_tags.sort(key=lambda entry: entry[0])
         row = 1
         column = 0
-        for category, tag, display_name, full_row in classified_tags:
+        for category, tag, display_name, full_row, author in classified_tags:
             button = GroupedTagButton(display_name) if "：" in display_name else QPushButton()
             button.setToolTip(display_name)
             button.setProperty(
@@ -620,17 +624,20 @@ class MainWindow(QMainWindow):
             button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
             button.setCheckable(True)
             button.setChecked(tag.id in self.selected_tag_ids)
+            button.setProperty("tagId", tag.id)
             button.setProperty("grouped", tag.group_id is not None)
             color = (
                 AUTHOR_TAG_COLOR
                 if self.catalog.is_author_tag(tag)
-                else "#6750a4"
+                else "#9a6f7b"
                 if tag.group_id
                 else "#777"
             )
             button.setStyleSheet(self._tag_button_style(color))
             button.toggled.connect(
-                lambda checked, tag_id=tag.id: self._tag_filter_toggled(tag_id, checked)
+                lambda checked, tag_id=tag.id, author_tag=author: self._tag_filter_toggled(
+                    tag_id, checked, author_tag
+                )
             )
             if full_row:
                 if column:
@@ -653,12 +660,14 @@ class MainWindow(QMainWindow):
             self.selected_kinds.discard(kind)
         self._filters_changed()
 
-    def _tag_filter_toggled(self, tag_id: int, checked: bool) -> None:
+    def _tag_filter_toggled(self, tag_id: int, checked: bool, author_tag: bool = False) -> None:
         if checked:
             self.selected_tag_ids.add(tag_id)
         else:
             self.selected_tag_ids.discard(tag_id)
         self._filters_changed()
+        if author_tag and not checked and self.tag_search.text().strip().casefold() != "作者":
+            self._refresh_filter_tags()
 
     def clear_filters(self) -> None:
         self.selected_tag_ids.clear()
@@ -681,7 +690,7 @@ class MainWindow(QMainWindow):
         self.notification_list = NotificationListWidget()
         self.notification_list.setSpacing(0)
         self.notification_list.setStyleSheet(
-            "QListWidget { background: transparent; border: 1px solid #6750a4; "
+            "QListWidget { background: transparent; border: 1px solid #9a6f7b; "
             "border-radius: 10px; padding: 0; } "
             "QListWidget::item, QListWidget::item:selected { "
             "background: transparent; border: none; }"
@@ -989,10 +998,10 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _style_notification_row(widget: QWidget, read: bool) -> None:
-        background = "#25212b" if read else "transparent"
+        background = "#2b2328" if read else "transparent"
         widget.setStyleSheet(
             f"background: {background}; border: none; "
-            "border-bottom: 1px solid #51465f; border-radius: 0;"
+            "border-bottom: 1px solid #57474f; border-radius: 0;"
         )
 
     def _fill_empty_notification_rows(self) -> None:
@@ -1093,7 +1102,7 @@ class MainWindow(QMainWindow):
                     self.catalog.tag_display_name(tag, all_tags),
                     AUTHOR_TAG_COLOR
                     if self.catalog.is_author_tag(tag)
-                    else "#6750a4"
+                    else "#9a6f7b"
                     if tag.group_id is not None
                     else "#777",
                     tag_sort_category(
@@ -1105,7 +1114,7 @@ class MainWindow(QMainWindow):
                 for tag in work.tags
             ]
             custom_tag_entries.sort(key=lambda entry: entry[2])
-            tag_entries = [(kind, "#006a6a"), *[entry[:2] for entry in custom_tag_entries]]
+            tag_entries = [(kind, "#4f7c78"), *[entry[:2] for entry in custom_tag_entries]]
             # 作品内容完全由自定义 row_widget 绘制。列表项自身不能再带
             # 旧版文本，否则部分 Windows 样式会把文字画在封面左侧。
             item = QListWidgetItem()
@@ -1198,7 +1207,7 @@ class MainWindow(QMainWindow):
             if current_widget is not None:
                 current_widget.setStyleSheet(
                     "QWidget#workRow { background: transparent; "
-                    "border: 2px solid #6750a4; border-radius: 12px; }"
+                    "border: 2px solid #9a6f7b; border-radius: 12px; }"
                 )
 
     def show_work_detail(self, work_id: int) -> None:

@@ -1,8 +1,8 @@
 from html import escape
 
-TAG_PREFIX_COLOR = "#b69de0"
-TAG_CHIP_PREFIX_COLOR = "#c2bec7"
-AUTHOR_TAG_COLOR = "#d6a928"
+TAG_PREFIX_COLOR = "#b98c99"
+TAG_CHIP_PREFIX_COLOR = "#c8b9be"
+AUTHOR_TAG_COLOR = "#b89a58"
 
 
 def tag_sort_category(display_name: str, font_metrics, *, author: bool = False) -> int:

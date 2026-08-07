@@ -69,6 +69,8 @@ def test_full_desktop_window_constructs(tmp_path) -> None:
     catalog = CatalogService(database)
     author_group = catalog.list_groups()[0]
     author_tag = catalog.create_tag("很长的作者名称", author_group.id)
+    second_author_tag = catalog.create_tag("另一位作者", author_group.id)
+    catalog.create_tag("普通")
     illustration = catalog.query(CatalogQuery(kinds=("illustration",))).items[0]
     catalog.update_work(
         illustration.id,
@@ -93,6 +95,38 @@ def test_full_desktop_window_constructs(tmp_path) -> None:
     )
     window.show()
     app.processEvents()
+    assert all(
+        button.property("tagId") not in {author_tag.id, second_author_tag.id}
+        for button in window.custom_tag_buttons
+    )
+    window.tag_search.setText("作者")
+    app.processEvents()
+    assert {
+        button.property("tagId")
+        for button in window.custom_tag_buttons
+        if button.property("tagLayoutClass") == "author"
+    } == {author_tag.id, second_author_tag.id}
+    window.tag_search.clear()
+    app.processEvents()
+    window._filter_tag_from_detail(author_tag.id, "illustration")
+    app.processEvents()
+    assert [
+        button.property("tagId")
+        for button in window.custom_tag_buttons
+        if button.property("tagLayoutClass") == "author"
+    ] == [author_tag.id]
+    visible_author = next(
+        button
+        for button in window.custom_tag_buttons
+        if button.property("tagId") == author_tag.id
+    )
+    visible_author.click()
+    app.processEvents()
+    assert not visible_author.isVisible()
+    assert all(
+        button.property("tagLayoutClass") != "author"
+        for button in window.custom_tag_buttons
+    )
     window.illustration_filter.click()
     app.processEvents()
     assert window.windowTitle().startswith("H库")
@@ -109,7 +143,7 @@ def test_full_desktop_window_constructs(tmp_path) -> None:
     author_chips = [chip for chip in tag_summary.chips if chip.property("authorTag")]
     assert len(author_chips) == 1
     assert AUTHOR_TAG_COLOR in author_chips[0].styleSheet()
-    assert "border: 2px solid #6750a4" in selected_row.styleSheet()
+    assert "border: 2px solid #9a6f7b" in selected_row.styleSheet()
     assert "background: transparent" in window.work_list.styleSheet()
     QTest.mouseClick(
         window.work_list.viewport(),
