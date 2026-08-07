@@ -1,0 +1,57 @@
+from __future__ import annotations
+
+import zipfile
+from datetime import UTC, datetime
+from io import BytesIO
+
+from PIL import Image
+
+from hlibrary.database import Database, Work
+from hlibrary.library import LibraryService, file_fingerprint
+from hlibrary.media import MediaService
+from hlibrary.reader import ReaderService
+
+
+def image_bytes() -> bytes:
+    output = BytesIO()
+    Image.new("RGB", (12, 18), "navy").save(output, "WEBP")
+    return output.getvalue()
+
+
+def test_reader_natural_order_progress_and_mode(tmp_path) -> None:
+    database = Database(tmp_path / "reader.db")
+    database.initialize("test")
+    library = LibraryService(database)
+    root = library.configure_root(tmp_path / "library")
+    path = root / "123.zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        for name in ("10.webp", "2.webp", "1.webp"):
+            archive.writestr(name, image_bytes())
+    with database.session() as session:
+        work = Work(
+            kind="comic",
+            relative_path=path.name,
+            file_name=path.name,
+            normalized_file_name=path.name,
+            normalized_title="",
+            rating=0,
+            fingerprint=file_fingerprint(path),
+            file_size=path.stat().st_size,
+            modified_ns=path.stat().st_mtime_ns,
+            status="ready",
+            cover_member="1.webp",
+            added_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        session.add(work)
+        session.flush()
+        work_id = work.id
+    media = MediaService(library, tmp_path / "cache")
+    reader = ReaderService(database, media)
+    with database.session() as session:
+        work = session.get(Work, work_id)
+    assert reader.members(work) == ["1.webp", "2.webp", "10.webp"]
+    reader.save_progress(work, 2, 99)
+    assert reader.progress(work).page_index == 2
+    reader.set_preferred_mode("single")
+    assert reader.preferred_mode() == "single"

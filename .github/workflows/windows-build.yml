@@ -1,0 +1,63 @@
+name: Windows build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Python dependencies
+        run: python -m pip install --upgrade pip && pip install -e ".[dev,build]"
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Test Python
+        run: pytest
+
+      - name: Lint Python
+        run: ruff check .
+
+      - name: Test and build frontend
+        working-directory: frontend
+        run: |
+          npm run lint
+          npm test
+          npm run build
+
+      - name: Build Windows application
+        run: python -m PyInstaller --noconfirm packaging/HLibrary.spec
+
+      - name: Smoke-test packaged application
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath "dist/HLibrary/HLibrary.exe" -ArgumentList "--version" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Packaged application smoke test failed with exit code $($process.ExitCode)" }
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" packaging/HLibrary.iss'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HLibrary-Windows
+          path: build-output/installer/*.exe
+          if-no-files-found: error

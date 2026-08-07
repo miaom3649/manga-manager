@@ -1,0 +1,103 @@
+from __future__ import annotations
+
+import hashlib
+import zipfile
+from io import BytesIO
+from pathlib import Path
+
+from PIL import Image, ImageOps, ImageSequence
+
+from hlibrary.database import Work
+from hlibrary.library import LibraryService
+from hlibrary.text import natural_key
+
+IMAGE_SUFFIXES = {
+    ".avif",
+    ".bmp",
+    ".gif",
+    ".heic",
+    ".heif",
+    ".jpeg",
+    ".jpg",
+    ".png",
+    ".tif",
+    ".tiff",
+    ".webp",
+}
+
+
+class MediaService:
+    def __init__(self, library: LibraryService, cache_dir: Path) -> None:
+        self.library = library
+        self.cache_dir = cache_dir
+        self.thumbnail_dir = cache_dir / "thumbnails"
+        self.thumbnail_dir.mkdir(parents=True, exist_ok=True)
+
+    def work_path(self, work: Work) -> Path:
+        root = self.library.library_root()
+        if root is None:
+            raise FileNotFoundError("尚未设置作品目录")
+        return root / Path(work.relative_path)
+
+    def comic_members(self, work: Work) -> list[str]:
+        if work.kind != "comic":
+            return []
+        with zipfile.ZipFile(self.work_path(work)) as archive:
+            names = [
+                info.filename
+                for info in archive.infolist()
+                if not info.is_dir() and Path(info.filename).suffix.casefold() in IMAGE_SUFFIXES
+            ]
+        return sorted(names, key=natural_key)
+
+    def preview_members(self, work: Work) -> list[str]:
+        available = set(self.comic_members(work))
+        return [
+            name
+            for name in ("004.webp", "007.webp", "010.webp", "013.webp", "016.webp")
+            if name in available
+        ]
+
+    def read_original(self, work: Work, member: str | None = None) -> bytes:
+        path = self.work_path(work)
+        if work.kind == "illustration":
+            return path.read_bytes()
+        selected = member or work.cover_member or "001.webp"
+        with zipfile.ZipFile(path) as archive:
+            return archive.read(selected)
+
+    def thumbnail(self, work: Work, width: int = 220, height: int = 220) -> Path:
+        identity = f"{work.fingerprint}:{work.cover_member}:{width}:{height}:v1"
+        animated_gif = work.kind == "illustration" and work.file_name.casefold().endswith(".gif")
+        suffix = ".gif" if animated_gif else ".webp"
+        target = self.thumbnail_dir / f"{hashlib.sha256(identity.encode()).hexdigest()}{suffix}"
+        if target.exists():
+            target.touch()
+            return target
+        data = self.read_original(work)
+        with Image.open(BytesIO(data)) as source:
+            if animated_gif and getattr(source, "n_frames", 1) > 1:
+                frames = []
+                durations = []
+                for frame in ImageSequence.Iterator(source):
+                    value = ImageOps.exif_transpose(frame).convert("RGBA")
+                    value.thumbnail((width, height), Image.Resampling.LANCZOS)
+                    frames.append(value)
+                    durations.append(frame.info.get("duration", 100))
+                frames[0].save(
+                    target,
+                    "GIF",
+                    save_all=True,
+                    append_images=frames[1:],
+                    duration=durations,
+                    loop=source.info.get("loop", 0),
+                    disposal=2,
+                )
+                return target
+            source.seek(0)
+            image = ImageOps.exif_transpose(source).convert("RGBA")
+            image.thumbnail((width, height), Image.Resampling.LANCZOS)
+            background = Image.new("RGBA", image.size, (0, 0, 0, 0))
+            background.alpha_composite(image)
+            background.save(target, "WEBP", quality=85, method=4)
+        return target
