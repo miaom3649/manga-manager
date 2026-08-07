@@ -32,7 +32,7 @@ class BackupService:
         directory.mkdir(exist_ok=True)
         return directory
 
-    def create(self, kind: str = "手动") -> Path:
+    def create(self, kind: str = "手动", *, automatic_day: date | None = None) -> Path:
         if kind not in {"自动", "手动", "恢复前"}:
             raise ValueError("未知备份类型")
         now = datetime.now()
@@ -48,7 +48,10 @@ class BackupService:
         self.validate(temporary)
         temporary.replace(target)
         if kind == "自动":
-            self._record_auto_backup(now.date())
+            # `automatic_if_due` may be checking a supplied/local calendar day.
+            # Record that exact day instead of deriving it again from the clock,
+            # otherwise a timezone/day-boundary can immediately create a duplicate.
+            self._record_auto_backup(automatic_day or now.date())
             self._trim_automatic()
         return target
 
@@ -87,7 +90,7 @@ class BackupService:
             value = session.get(AppMeta, LAST_AUTO_BACKUP)
             if value and value.value == today.isoformat():
                 return None
-        return self.create("自动")
+        return self.create("自动", automatic_day=today)
 
     def scheduled_if_due(self, now: datetime | None = None) -> Path | None:
         now = now or datetime.now()
