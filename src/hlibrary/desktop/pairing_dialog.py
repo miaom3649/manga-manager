@@ -6,7 +6,6 @@ from io import BytesIO
 import qrcode
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QDialog,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -16,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from hlibrary.config import DEFAULT_API_PORT
+from hlibrary.desktop.windowing import ScreenCenteredDialog
 from hlibrary.pairing import PairingService
 
 
@@ -30,7 +30,7 @@ def local_ip() -> str:
         sock.close()
 
 
-class PairingDialog(QDialog):
+class PairingDialog(ScreenCenteredDialog):
     def __init__(self, pairing: PairingService, parent=None) -> None:
         super().__init__(parent)
         self.pairing = pairing

@@ -11,7 +11,6 @@ from hlibrary.catalog import CatalogService
 from hlibrary.library import LibraryService
 from hlibrary.media import MediaService
 from hlibrary.pairing import PairingService
-from hlibrary.upload import UploadService
 
 
 class ApiServer:
@@ -24,7 +23,6 @@ class ApiServer:
         catalog: CatalogService | None = None,
         media: MediaService | None = None,
         pairing: PairingService | None = None,
-        uploads: UploadService | None = None,
     ) -> None:
         options: dict[str, object] = {
             "host": host,
@@ -35,15 +33,14 @@ class ApiServer:
         # 正式版无控制台时禁用控制台日志；调试版有控制台时保留日志。
         if sys.stdout is None or sys.stderr is None:
             options["log_config"] = None
-        config = uvicorn.Config(
-            create_api(web_root, library, catalog, media, pairing, uploads), **options
-        )
+        config = uvicorn.Config(create_api(web_root, library, catalog, media, pairing), **options)
         self._server = uvicorn.Server(config)
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
+        self._server.should_exit = False
         self._thread = threading.Thread(target=self._server.run, name="hlibrary-api", daemon=True)
         self._thread.start()
 

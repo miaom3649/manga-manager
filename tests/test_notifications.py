@@ -22,6 +22,8 @@ def test_notification_read_delete_and_retention(tmp_path) -> None:
     service = NotificationService(database)
     assert service.unread_count() == 2
     assert service.prune() == 1
+    service.mark_read(1)
+    assert service.unread_count() == 0
     service.mark_all_read()
     assert service.unread_count() == 0
     service.clear()

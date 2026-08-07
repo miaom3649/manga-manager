@@ -2,14 +2,16 @@ from __future__ import annotations
 
 from functools import partial
 
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QCloseEvent, QColor, QMouseEvent, QMovie, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QFrame,
     QGraphicsDropShadowEffect,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -24,6 +26,13 @@ from PySide6.QtWidgets import (
 from hlibrary.catalog import CatalogService
 from hlibrary.database import Tag, Work
 from hlibrary.desktop.reader_dialog import pixmap_from_bytes
+from hlibrary.desktop.tag_widgets import (
+    AUTHOR_TAG_COLOR,
+    is_long_tag_category,
+    tag_chip_text,
+    tag_sort_category,
+)
+from hlibrary.desktop.windowing import FloatingCardDialog, ScreenCenteredDialog
 from hlibrary.media import MediaService
 
 
@@ -32,6 +41,9 @@ def _clear_layout(layout) -> None:
         item = layout.takeAt(0)
         if item.widget():
             item.widget().deleteLater()
+        elif item.layout():
+            _clear_layout(item.layout())
+            item.layout().deleteLater()
 
 
 class PressPreviewLabel(QLabel):
@@ -48,7 +60,28 @@ class PressPreviewLabel(QLabel):
         super().mouseReleaseEvent(event)
 
 
-class CoverSelectorDialog(QDialog):
+class ResponsiveTagGrid(QWidget):
+    resized = Signal(int)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self.resized.emit(event.size().width())
+
+
+class ClickableTagLabel(QLabel):
+    clicked = Signal()
+
+    def __init__(self, text: str, parent=None) -> None:
+        super().__init__(text, parent)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+
+class CoverSelectorDialog(ScreenCenteredDialog):
     def __init__(self, work: Work, media: MediaService, current: str | None, parent=None):
         super().__init__(parent)
         self.work = work
@@ -108,17 +141,18 @@ class CoverSelectorDialog(QDialog):
             self.accept()
 
 
-class TagManagerDialog(QDialog):
+class TagManagerDialog(FloatingCardDialog):
     tag_created = Signal(int)
 
-    def __init__(self, catalog: CatalogService, parent=None) -> None:
-        super().__init__(parent)
+    def __init__(self, catalog: CatalogService, parent=None, *, mode: str = "tags") -> None:
+        super().__init__(parent, card_size=QSize(560, 520))
         self.catalog = catalog
-        self.setWindowTitle("管理 Tag")
-        self.resize(560, 520)
-        root = QVBoxLayout(self)
+        self.mode = mode
+        self.setWindowTitle("管理 Tag 分组" if mode == "groups" else "管理 Tag")
+        root = self.card_layout
         group_row = QHBoxLayout()
         self.group_name = QLineEdit()
+        self.group_name.setMaxLength(5)
         self.group_name.setPlaceholderText("新分组名称")
         group_add = QPushButton("创建分组")
         group_add.clicked.connect(self.create_group)
@@ -126,12 +160,11 @@ class TagManagerDialog(QDialog):
         group_row.addWidget(group_add)
         tag_row = QHBoxLayout()
         self.tag_name = QLineEdit()
+        self.tag_name.setMaxLength(5)
         self.tag_name.setPlaceholderText("新 Tag 名称")
-        self.group_box = QComboBox()
-        tag_add = QPushButton("创建 Tag")
+        tag_add = QPushButton("创建新 Tag")
         tag_add.clicked.connect(self.create_tag)
         tag_row.addWidget(self.tag_name)
-        tag_row.addWidget(self.group_box)
         tag_row.addWidget(tag_add)
         self.items = QVBoxLayout()
         content = QWidget()
@@ -139,59 +172,56 @@ class TagManagerDialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(content)
-        root.addLayout(group_row)
-        root.addLayout(tag_row)
+        if mode == "groups":
+            root.addLayout(group_row)
+        else:
+            root.addLayout(tag_row)
         root.addWidget(scroll, 1)
-        close_buttons = QDialogButtonBox(QDialogButtonBox.Close)
-        close_buttons.rejected.connect(self.reject)
-        root.addWidget(close_buttons)
         self.refresh()
 
     def refresh(self) -> None:
         groups = self.catalog.list_groups()
-        self.group_box.clear()
-        self.group_box.addItem("未分组", None)
-        for group in groups:
-            self.group_box.addItem(group.name, group.id)
         tags = self.catalog.list_tags()
         _clear_layout(self.items)
-        if groups:
-            self.items.addWidget(QLabel("分组（隐藏属性）"))
-        for group in groups:
-            row = QWidget()
-            layout = QHBoxLayout(row)
-            layout.setContentsMargins(4, 2, 4, 2)
-            name = QLineEdit(group.name)
-            rename = QPushButton("改名")
-            rename.clicked.connect(partial(self.rename_group, group.id, name))
-            remove = QPushButton("删除分组")
-            remove.clicked.connect(partial(self.delete_group, group.id, group.name))
-            layout.addWidget(name, 1)
-            layout.addWidget(rename)
-            layout.addWidget(remove)
-            self.items.addWidget(row)
-        if tags:
-            self.items.addWidget(QLabel("Tag"))
-        for tag in tags:
-            row = QWidget()
-            layout = QHBoxLayout(row)
-            layout.setContentsMargins(4, 2, 4, 2)
-            name = QLineEdit(tag.name)
-            group_box = QComboBox()
-            group_box.addItem("未分组", None)
+        if self.mode == "groups":
             for group in groups:
-                group_box.addItem(group.name, group.id)
-            group_box.setCurrentIndex(max(0, group_box.findData(tag.group_id)))
-            save = QPushButton("保存")
-            save.clicked.connect(partial(self.save_tag, tag.id, name, group_box))
-            layout.addWidget(name, 1)
-            layout.addWidget(group_box)
-            layout.addWidget(QLabel(f"{len(tag.works)} 部作品"))
-            layout.addWidget(save)
-            remove = QPushButton("删除")
-            remove.clicked.connect(partial(self.delete_tag, tag))
-            layout.addWidget(remove)
-            self.items.addWidget(row)
+                row = QWidget()
+                layout = QHBoxLayout(row)
+                layout.setContentsMargins(4, 2, 4, 2)
+                name = QLineEdit(group.name)
+                name.setMaxLength(5)
+                remove = QPushButton("删除分组")
+                if self.catalog.is_author_group(group):
+                    name.setReadOnly(True)
+                    remove.setText("系统分组")
+                    remove.setEnabled(False)
+                else:
+                    name.editingFinished.connect(partial(self.rename_group, group.id, name))
+                    remove.clicked.connect(partial(self.delete_group, group.id, group.name))
+                layout.addWidget(name, 1)
+                layout.addWidget(remove)
+                self.items.addWidget(row)
+        else:
+            for tag in tags:
+                row = QWidget()
+                layout = QHBoxLayout(row)
+                layout.setContentsMargins(4, 2, 4, 2)
+                name = QLineEdit(tag.name)
+                name.setMaxLength(200 if self.catalog.is_author_tag(tag) else 5)
+                group_box = QComboBox()
+                group_box.addItem("未分组", None)
+                for group in groups:
+                    group_box.addItem(group.name, group.id)
+                group_box.setCurrentIndex(max(0, group_box.findData(tag.group_id)))
+                name.editingFinished.connect(partial(self.rename_tag, tag.id, name))
+                group_box.currentIndexChanged.connect(partial(self.move_tag, tag.id, group_box))
+                layout.addWidget(name, 1)
+                layout.addWidget(group_box)
+                layout.addWidget(QLabel(f"{len(tag.works)} 部作品"))
+                remove = QPushButton("删除")
+                remove.clicked.connect(partial(self.delete_tag, tag))
+                layout.addWidget(remove)
+                self.items.addWidget(row)
         self.items.addStretch(1)
 
     def rename_group(self, group_id: int, editor: QLineEdit) -> None:
@@ -199,15 +229,23 @@ class TagManagerDialog(QDialog):
             self.catalog.rename_group(group_id, editor.text())
         except ValueError as exc:
             QMessageBox.warning(self, "无法改名", str(exc))
+            self.refresh()
             return
-        self.refresh()
 
-    def save_tag(self, tag_id: int, editor: QLineEdit, group_box: QComboBox) -> None:
+    def rename_tag(self, tag_id: int, editor: QLineEdit) -> None:
         try:
             self.catalog.rename_tag(tag_id, editor.text())
+        except ValueError as exc:
+            QMessageBox.warning(self, "无法改名", str(exc))
+            self.refresh()
+            return
+
+    def move_tag(self, tag_id: int, group_box: QComboBox, _index: int) -> None:
+        try:
             self.catalog.move_tag(tag_id, group_box.currentData())
         except ValueError as exc:
-            QMessageBox.warning(self, "无法保存", str(exc))
+            QMessageBox.warning(self, "无法移动", str(exc))
+            self.refresh()
             return
         self.refresh()
 
@@ -251,7 +289,7 @@ class TagManagerDialog(QDialog):
 
     def create_tag(self) -> None:
         try:
-            tag = self.catalog.create_tag(self.tag_name.text(), self.group_box.currentData())
+            tag = self.catalog.create_tag(self.tag_name.text(), None)
         except ValueError as exc:
             QMessageBox.warning(self, "无法创建", str(exc))
             return
@@ -272,7 +310,8 @@ class TagManagerDialog(QDialog):
         self.refresh()
 
     def reject(self) -> None:
-        if self.group_name.text().strip() or self.tag_name.text().strip():
+        pending = self.group_name.text() if self.mode == "groups" else self.tag_name.text()
+        if pending.strip():
             if (
                 QMessageBox.question(
                     self, "放弃未提交输入？", "新分组或新 Tag 尚未创建，确认关闭？"
@@ -283,12 +322,122 @@ class TagManagerDialog(QDialog):
         super().reject()
 
 
-class WorkDetailDialog(QDialog):
+def open_tag_management(catalog: CatalogService, parent=None) -> list[int]:
+    chooser = TagManagementChooserDialog(parent)
+    chooser.exec()
+    if chooser.choice == "groups":
+        TagManagerDialog(catalog, parent, mode="groups").exec()
+        return []
+    if chooser.choice == "tags":
+        created: list[int] = []
+        dialog = TagManagerDialog(catalog, parent, mode="tags")
+        dialog.tag_created.connect(created.append)
+        dialog.exec()
+        return created
+    return []
+
+
+class TagManagementChooserDialog(FloatingCardDialog):
+    """Full-screen dimmed chooser; clicking outside its card dismisses it."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent, card_size=QSize(540, 206))
+        self.choice: str | None = None
+        card_layout = QHBoxLayout()
+        card_layout.setSpacing(22)
+        self.card_layout.addLayout(card_layout)
+        for label, choice in (("管理 Tag 分组", "groups"), ("管理 Tag", "tags")):
+            button = QPushButton(label)
+            button.setFixedSize(220, 150)
+            button.setStyleSheet(
+                "QPushButton { background: transparent; color: palette(button-text); "
+                "border: 2px solid #6750a4; border-radius: 18px; "
+                "font-size: 20px; font-weight: 700; } "
+                "QPushButton:hover { background: palette(midlight); }"
+            )
+            button.clicked.connect(partial(self.choose, choice))
+            card_layout.addWidget(button)
+
+    def choose(self, choice: str) -> None:
+        self.choice = choice
+        self.accept()
+
+
+class ResetSettingsDialog(FloatingCardDialog):
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent, card_size=QSize(560, 360))
+        title = QLabel("恢复所有设置")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("font-size: 25px; font-weight: 700; color: #d93025;")
+        warning = QLabel(
+            "该操作不可恢复。\n\n"
+            "软件数据库将被彻底重建，所有管理资料和设置都会恢复默认，"
+            "包括标题、Tag、分组、星级、封面、阅读进度、通知、配对设备和主题。\n\n"
+            "全部备份和缓存也会删除。\n\n"
+            "只保留漫画、插画原文件和当前作品目录位置，随后重新扫描作品。"
+        )
+        warning.setWordWrap(True)
+        warning.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        cancel = QPushButton("取消")
+        cancel.clicked.connect(self.reject)
+        confirm = QPushButton("确认恢复所有设置")
+        cancel.setFixedHeight(46)
+        confirm.setFixedHeight(46)
+        confirm.setStyleSheet(
+            "QPushButton { background: #d93025; color: white; "
+            "border: 2px solid #d93025; border-radius: 10px; "
+            "font-weight: 700; padding: 10px 14px; } "
+            "QPushButton:hover { background: #b3261e; }"
+        )
+        confirm.clicked.connect(self.accept)
+        buttons = QHBoxLayout()
+        buttons.addWidget(cancel, 1)
+        buttons.addWidget(confirm, 1)
+        self.card_layout.addWidget(title)
+        self.card_layout.addWidget(warning, 1)
+        self.card_layout.addLayout(buttons)
+
+
+class UploadResultDialog(FloatingCardDialog):
+    """Show a batch upload rejection or request one overwrite decision."""
+
+    def __init__(self, title: str, message: str, parent=None, *, overwrite: bool = False) -> None:
+        super().__init__(parent, card_size=QSize(560, 360))
+        heading = QLabel(title)
+        heading.setAlignment(Qt.AlignCenter)
+        heading.setStyleSheet("font-size: 24px; font-weight: 700;")
+        details = QLabel(message)
+        details.setWordWrap(True)
+        details.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.card_layout.addWidget(heading)
+        self.card_layout.addWidget(details, 1)
+        buttons = QHBoxLayout()
+        cancel = QPushButton("取消" if overwrite else "知道了")
+        cancel.setFixedHeight(46)
+        cancel.clicked.connect(self.reject)
+        buttons.addWidget(cancel, 1)
+        if overwrite:
+            confirm = QPushButton("覆盖")
+            confirm.setFixedHeight(46)
+            confirm.setStyleSheet(
+                "QPushButton { background: #d93025; color: white; "
+                "border: 2px solid #d93025; border-radius: 10px; "
+                "font-weight: 700; padding: 10px 14px; } "
+                "QPushButton:hover { background: #b3261e; }"
+            )
+            confirm.clicked.connect(self.accept)
+            buttons.addWidget(confirm, 1)
+        self.card_layout.addLayout(buttons)
+
+
+class WorkDetailDialog(FloatingCardDialog):
     saved = Signal()
     reading_requested = Signal(int)
+    kind_filter_requested = Signal(str)
+    tag_filter_requested = Signal(int, str)
 
     def __init__(self, work_id: int, catalog: CatalogService, media: MediaService, parent=None):
-        super().__init__(parent)
+        super().__init__(parent, card_size=QSize(760, 760))
         self.work_id = work_id
         self.catalog = catalog
         self.media = media
@@ -296,8 +445,13 @@ class WorkDetailDialog(QDialog):
         self.editing = False
         self.selected_tags: set[int] = set()
         self.setWindowTitle("作品详情")
-        self.resize(760, 760)
-        self.root = QVBoxLayout(self)
+        detail_content = QWidget()
+        self.root = QVBoxLayout(detail_content)
+        detail_scroll = QScrollArea()
+        detail_scroll.setWidgetResizable(True)
+        detail_scroll.setFrameShape(QFrame.NoFrame)
+        detail_scroll.setWidget(detail_content)
+        self.card_layout.addWidget(detail_scroll)
         self.large_preview = QLabel(self)
         self.large_preview.setAlignment(Qt.AlignCenter)
         self.large_preview.setStyleSheet("background: rgba(0,0,0,210); padding: 20px")
@@ -312,12 +466,6 @@ class WorkDetailDialog(QDialog):
             self.reject()
             return
         work = self.work
-        top = QHBoxLayout()
-        top.addWidget(QLabel("漫画详情" if work.kind == "comic" else "插画详情"), 1)
-        edit = QPushButton("编辑")
-        edit.clicked.connect(self.render_edit)
-        top.addWidget(edit)
-        self.root.addLayout(top)
         cover = QLabel()
         cover.setAlignment(Qt.AlignCenter)
         cover.setMinimumHeight(330)
@@ -346,8 +494,65 @@ class WorkDetailDialog(QDialog):
         )
         self.root.addWidget(QLabel("★" * work.rating + "☆" * (3 - work.rating)))
         tags = self.catalog.list_tags()
-        names = [self.catalog.tag_display_name(tag, tags) for tag in work.tags]
-        self.root.addWidget(QLabel("  ".join(names) or "暂无 Tag"))
+        tag_widget = ResponsiveTagGrid()
+        tag_layout = QGridLayout(tag_widget)
+        tag_layout.setContentsMargins(0, 2, 0, 2)
+        tag_layout.setHorizontalSpacing(7)
+        tag_layout.setVerticalSpacing(6)
+        tag_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        custom_tag_entries = [
+            (
+                self.catalog.tag_display_name(tag, tags),
+                AUTHOR_TAG_COLOR
+                if self.catalog.is_author_tag(tag)
+                else "#6750a4"
+                if tag.group_id is not None
+                else "#777",
+                tag_sort_category(
+                    self.catalog.tag_display_name(tag, tags),
+                    self.fontMetrics(),
+                    author=self.catalog.is_author_tag(tag),
+                ),
+                tag.id,
+            )
+            for tag in work.tags
+        ]
+        custom_tag_entries.sort(key=lambda entry: entry[2])
+        tag_entries = [
+            ("漫画" if work.kind == "comic" else "插画", "#006a6a", 3, None),
+            *custom_tag_entries,
+        ]
+        tag_items: list[tuple[QLabel, int]] = []
+        for name, color, category, tag_id in tag_entries:
+            label = ClickableTagLabel(tag_chip_text(name))
+            label.setObjectName("detailTag")
+            label.setAlignment(Qt.AlignCenter)
+            label.setToolTip(name)
+            label.setFixedHeight(26)
+            span = 3 if is_long_tag_category(category) else 1
+            label.setFixedWidth(48 * span + 7 * (span - 1))
+            label.setStyleSheet(
+                f"background: {color}; color: white; border-radius: 9px; padding: 3px 8px;"
+            )
+            if tag_id is None:
+                label.clicked.connect(
+                    lambda checked_kind=work.kind: self.filter_by_kind(checked_kind)
+                )
+            else:
+                label.clicked.connect(partial(self.filter_by_tag, tag_id))
+            tag_items.append((label, span))
+        tag_widget.resized.connect(
+            lambda _width: QTimer.singleShot(
+                0,
+                lambda: self._layout_detail_tags(tag_widget, tag_layout, tag_items),
+            )
+        )
+        self._layout_detail_tags(tag_widget, tag_layout, tag_items)
+        self.root.addWidget(tag_widget)
+        QTimer.singleShot(
+            0,
+            lambda: self._layout_detail_tags(tag_widget, tag_layout, tag_items),
+        )
         if work.kind == "comic":
             previews = self.media.preview_members(work)
             if previews:
@@ -377,9 +582,54 @@ class WorkDetailDialog(QDialog):
             else:
                 self.root.addWidget(QLabel("暂无预览图"))
             read = QPushButton("开始阅读")
+            read.setStyleSheet(
+                "QPushButton { background: #6750a4; color: white; "
+                "border: 2px solid #6750a4; border-radius: 10px; "
+                "font-weight: 700; padding: 8px 12px; }"
+            )
             read.clicked.connect(self.start_reading)
             self.root.addWidget(read)
+        edit = QPushButton("编辑")
+        edit.clicked.connect(self.render_edit)
+        self.root.addWidget(edit)
         self.root.addStretch(1)
+
+    def filter_by_kind(self, kind: str) -> None:
+        self.kind_filter_requested.emit(kind)
+        self.accept()
+
+    def filter_by_tag(self, tag_id: int) -> None:
+        assert self.work is not None
+        self.tag_filter_requested.emit(tag_id, self.work.kind)
+        self.accept()
+
+    @staticmethod
+    def _layout_detail_tags(
+        container: QWidget,
+        layout: QGridLayout,
+        items: list[tuple[QLabel, int]],
+    ) -> None:
+        spacing = 7
+        short_width = 48
+        columns = max(3, (max(short_width, container.width()) + spacing) // 55)
+        previous_columns = container.property("tagGridColumns") or 0
+        for index in range(max(previous_columns, columns)):
+            layout.setColumnMinimumWidth(index, short_width if index < columns else 0)
+            layout.setColumnStretch(index, 0)
+        container.setProperty("tagGridColumns", columns)
+        for label, _span in items:
+            layout.removeWidget(label)
+        row = 0
+        column = 0
+        for label, span in items:
+            if column + span > columns:
+                row += 1
+                column = 0
+            layout.addWidget(label, row, column, 1, span, Qt.AlignLeft)
+            column += span
+            if column == columns:
+                row += 1
+                column = 0
 
     def start_reading(self) -> None:
         assert self.work is not None
@@ -418,38 +668,113 @@ class WorkDetailDialog(QDialog):
         form.addRow("标题", self.title_edit)
         form.addRow("星级（0～3）", self.rating_edit)
         self.root.addLayout(form)
-        self.root.addWidget(QLabel("Tag"))
         self.tag_search_edit = QLineEdit()
         self.tag_search_edit.setPlaceholderText("搜索 Tag 或隐藏分组")
         self.tag_search_edit.textChanged.connect(self.refresh_tag_choices)
         self.root.addWidget(self.tag_search_edit)
-        self.tag_area = QVBoxLayout()
+        self.tag_content = ResponsiveTagGrid()
+        self.tag_content.resized.connect(self._tag_grid_resized)
+        self.tag_area = QGridLayout(self.tag_content)
+        self.tag_area.setContentsMargins(0, 0, 0, 0)
+        self.tag_area.setHorizontalSpacing(7)
+        self.tag_area.setVerticalSpacing(6)
+        self.tag_area.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        tag_scroll = QScrollArea()
+        tag_scroll.setWidgetResizable(True)
+        tag_scroll.setFrameShape(QFrame.NoFrame)
+        tag_scroll.setMinimumHeight(250)
+        tag_scroll.setWidget(self.tag_content)
         self.selected_tags = {tag.id for tag in self.work.tags}
         self.pending_cover = self.work.cover_member
         self.refresh_tag_choices()
-        self.root.addLayout(self.tag_area)
-        manage = QPushButton("管理 Tag")
+        self.root.addWidget(tag_scroll, 1)
+        QTimer.singleShot(0, self._layout_tag_choices)
+        manage = QPushButton("管理")
         manage.clicked.connect(self.manage_tags)
         self.root.addWidget(manage)
         if self.work.kind == "comic":
             cover = QPushButton("更改封面")
             cover.clicked.connect(self.choose_cover)
             self.root.addWidget(cover)
-        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.save)
-        buttons.rejected.connect(self.render_view)
-        self.root.addWidget(buttons)
+        save = QPushButton("保存")
+        save.setStyleSheet(
+            "QPushButton { background: #6750a4; color: white; "
+            "border: 2px solid #6750a4; border-radius: 10px; "
+            "font-weight: 700; padding: 8px 12px; }"
+        )
+        save.clicked.connect(self.save)
+        self.root.addWidget(save)
 
     def refresh_tag_choices(self) -> None:
         _clear_layout(self.tag_area)
         tags = self.catalog.list_tags(self.tag_search_edit.text())
         all_tags = self.catalog.list_tags()
-        for tag in tags:
-            button = QPushButton(self.catalog.tag_display_name(tag, all_tags))
+        tag_choices = [
+            (
+                tag,
+                self.catalog.tag_display_name(tag, all_tags),
+                tag_sort_category(
+                    self.catalog.tag_display_name(tag, all_tags),
+                    self.fontMetrics(),
+                    author=self.catalog.is_author_tag(tag),
+                ),
+            )
+            for tag in tags
+        ]
+        tag_choices.sort(key=lambda entry: entry[2])
+        self.tag_choice_widgets: list[tuple[QPushButton, int]] = []
+        self._tag_grid_columns = 0
+        for tag, display_name, category in tag_choices:
+            long_tag = is_long_tag_category(category)
+            span = 3 if long_tag else 1
+            button = QPushButton(display_name, self.tag_content)
             button.setCheckable(True)
             button.setChecked(tag.id in self.selected_tags)
+            button.setFixedHeight(26)
+            button.setFixedWidth(48 * span + 7 * (span - 1))
+            button.setToolTip(display_name)
+            color = (
+                AUTHOR_TAG_COLOR
+                if self.catalog.is_author_tag(tag)
+                else "#6750a4"
+                if tag.group_id is not None
+                else "#777"
+            )
+            button.setStyleSheet(
+                "QPushButton { background: transparent; color: palette(text); "
+                f"border: 1px solid {color}; border-radius: 9px; padding: 0 8px; }} "
+                f"QPushButton:checked {{ background: {color}; color: white; font-weight: 700; }}"
+            )
             button.toggled.connect(partial(self.toggle_tag, tag.id))
-            self.tag_area.addWidget(button)
+            self.tag_choice_widgets.append((button, span))
+        self._layout_tag_choices()
+
+    def _tag_grid_resized(self, _width: int) -> None:
+        QTimer.singleShot(0, self._layout_tag_choices)
+
+    def _layout_tag_choices(self) -> None:
+        if not hasattr(self, "tag_choice_widgets"):
+            return
+        spacing = 7
+        short_width = 48
+        available = max(short_width, self.tag_content.width())
+        columns = max(3, (available + spacing) // (short_width + spacing))
+        if columns == self._tag_grid_columns and self.tag_area.count():
+            return
+        self._tag_grid_columns = columns
+        for button, _span in self.tag_choice_widgets:
+            self.tag_area.removeWidget(button)
+        row = 0
+        column = 0
+        for button, span in self.tag_choice_widgets:
+            if column + span > columns:
+                row += 1
+                column = 0
+            self.tag_area.addWidget(button, row, column, 1, span, Qt.AlignLeft)
+            column += span
+            if column == columns:
+                row += 1
+                column = 0
 
     def toggle_tag(self, tag_id: int, checked: bool) -> None:
         if checked:
@@ -458,9 +783,7 @@ class WorkDetailDialog(QDialog):
             self.selected_tags.discard(tag_id)
 
     def manage_tags(self) -> None:
-        dialog = TagManagerDialog(self.catalog, self)
-        dialog.tag_created.connect(self.selected_tags.add)
-        dialog.exec()
+        self.selected_tags.update(open_tag_management(self.catalog, self))
         self.refresh_tag_choices()
 
     def choose_cover(self) -> None:
@@ -481,14 +804,40 @@ class WorkDetailDialog(QDialog):
         self.saved.emit()
         self.render_view()
 
-    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
-        if self.editing:
-            answer = QMessageBox.question(
+    def _has_unsaved_edits(self) -> bool:
+        if not self.editing or self.work is None:
+            return False
+        return any(
+            (
+                self.title_edit.text() != (self.work.title or ""),
+                self.rating_edit.value() != self.work.rating,
+                self.selected_tags != {tag.id for tag in self.work.tags},
+                self.pending_cover != self.work.cover_member,
+            )
+        )
+
+    def _confirm_discard_edits(self) -> bool:
+        if not self._has_unsaved_edits():
+            return True
+        return (
+            QMessageBox.question(
                 self,
                 "放弃未保存修改？",
-                "当前标题、星级、封面或 Tag 选择尚未保存。确认关闭并放弃这些修改？",
+                "标题、星级、封面或 Tag 已被修改。确认放弃本次修改？",
             )
-            if answer != QMessageBox.Yes:
-                event.ignore()
-                return
+            == QMessageBox.Yes
+        )
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+        if self.editing and not self._confirm_discard_edits():
+            event.ignore()
+            return
         event.accept()
+
+    def reject(self) -> None:
+        if self.editing:
+            if not self._confirm_discard_edits():
+                return
+            self.render_view()
+            return
+        super().reject()

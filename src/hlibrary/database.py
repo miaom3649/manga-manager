@@ -287,3 +287,7 @@ class Database:
 
     def close(self) -> None:
         self.engine.dispose()
+
+    def reopen(self) -> None:
+        self.engine = build_engine(self.path)
+        self.sessions = sessionmaker(bind=self.engine, expire_on_commit=False, class_=Session)

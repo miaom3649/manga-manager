@@ -84,6 +84,19 @@ class BackupService:
             results.append(BackupInfo(path, parts[1], created))
         return sorted(results, key=lambda item: item.path.stat().st_mtime, reverse=True)
 
+    def delete_all(self) -> int:
+        directory = self.backup_directory()
+        targets = {
+            *directory.glob("H库-*.sqlite"),
+            *directory.glob("H库-*.tmp"),
+        }
+        removed = 0
+        for path in targets:
+            if path.is_file():
+                path.unlink()
+                removed += 1
+        return removed
+
     def automatic_if_due(self, today: date | None = None) -> Path | None:
         today = today or datetime.now().date()
         with self.database.session() as session:

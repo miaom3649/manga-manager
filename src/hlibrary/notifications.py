@@ -30,6 +30,14 @@ class NotificationService:
                 .values(read_at=datetime.now(UTC))
             )
 
+    def mark_read(self, notification_id: int) -> None:
+        with self.database.session() as session:
+            session.execute(
+                update(Notification)
+                .where(Notification.id == notification_id, Notification.read_at.is_(None))
+                .values(read_at=datetime.now(UTC))
+            )
+
     def delete(self, notification_id: int) -> None:
         with self.database.session() as session:
             session.execute(delete(Notification).where(Notification.id == notification_id))

@@ -36,8 +36,8 @@ class MigrationService:
         if source_root is None:
             raise ValueError("尚未设置作品目录")
         target_root = target_root.expanduser().resolve()
-        if target_root == source_root or target_root.is_relative_to(source_root):
-            raise ValueError("新目录不能是当前目录或其子目录")
+        if target_root == source_root:
+            raise ValueError("新目录不能与当前目录相同")
         target_root.mkdir(parents=True, exist_ok=True)
         with self.database.session() as session:
             works = list(session.scalars(select(Work)))

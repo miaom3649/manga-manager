@@ -7,8 +7,6 @@ from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, Qt,
 from PySide6.QtGui import QCursor, QImage, QKeyEvent, QMouseEvent, QPixmap, QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
-    QComboBox,
-    QDialog,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -19,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from hlibrary.database import Work
+from hlibrary.desktop.windowing import ScreenCenteredDialog
 from hlibrary.reader import ReaderService
 
 
@@ -89,7 +88,10 @@ class ReaderTitleBar(QWidget):
                 self.window().showMaximized()
 
 
-class ReaderDialog(QDialog):
+class ReaderDialog(ScreenCenteredDialog):
+    TITLE_BAR_HEIGHT = 68
+    TOOLBAR_HEIGHT = 72
+
     def __init__(self, work: Work, reader: ReaderService, parent=None) -> None:
         super().__init__(parent)
         self.work = work
@@ -115,53 +117,83 @@ class ReaderDialog(QDialog):
         root.setSpacing(0)
 
         self.title_bar = ReaderTitleBar(self)
-        self.title_bar.setMinimumHeight(0)
-        self.title_bar.setMaximumHeight(54)
+        self.title_bar.setObjectName("readerTitleBar")
+        self.title_bar.setFixedHeight(self.TITLE_BAR_HEIGHT)
         self.title_bar.setStyleSheet(
-            "background: palette(window); border-bottom: 1px solid palette(mid)"
+            "QWidget#readerTitleBar { background: transparent; border: none; } "
+            "QPushButton#readerBackBlock, QLabel#readerTitleBlock { "
+            "background: rgba(17, 17, 17, 150); color: white; border: none; "
+            "border-radius: 10px; padding: 0 12px; } "
+            "QPushButton#readerBackBlock:hover { background: rgba(17, 17, 17, 205); }"
         )
         title_layout = QHBoxLayout(self.title_bar)
-        title_layout.setContentsMargins(8, 5, 8, 5)
+        title_layout.setContentsMargins(12, 8, 12, 8)
         back = QPushButton("←")
+        back.setObjectName("readerBackBlock")
         back.setToolTip("返回详情")
-        back.setFixedWidth(44)
+        back.setFixedSize(46, 42)
         back.clicked.connect(self.accept)
         title = QLabel(work.title or work.file_name.rsplit(".", 1)[0])
+        title.setObjectName("readerTitleBlock")
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("font-size: 17px; font-weight: 700")
+        title.setMinimumSize(240, 42)
+        title.setMaximumWidth(600)
+        title.setStyleSheet("font-size: 17px; font-weight: 700;")
         title.setAttribute(Qt.WA_TransparentForMouseEvents)
         title_layout.addWidget(back)
-        title_layout.addWidget(title, 1)
-        title_layout.addSpacing(44)
-        root.addWidget(self.title_bar)
+        title_layout.addStretch(1)
+        title_layout.addWidget(title)
+        title_layout.addStretch(1)
+        title_layout.addSpacing(46)
 
         self.toolbar_bar = QWidget(self)
-        self.toolbar_bar.setMinimumHeight(0)
-        self.toolbar_bar.setMaximumHeight(58)
+        self.toolbar_bar.setObjectName("readerToolbarBar")
+        self.toolbar_bar.setFixedHeight(self.TOOLBAR_HEIGHT)
         self.toolbar_bar.setStyleSheet(
-            "background: palette(window); border-top: 1px solid palette(mid)"
+            "QWidget#readerToolbarBar { background: transparent; border: none; } "
+            "QLabel#readerInfoBlock, QPushButton[readerBlock=\"true\"], "
+            "QSpinBox#readerJumpBlock { "
+            "background: rgba(17, 17, 17, 150); color: white; border: none; "
+            "border-radius: 10px; padding: 0 12px; } "
+            "QPushButton[readerBlock=\"true\"]:hover, "
+            "QSpinBox#readerJumpBlock:hover, QSpinBox#readerJumpBlock:focus { "
+            "background: rgba(17, 17, 17, 205); color: white; border: none; } "
         )
         toolbar = QHBoxLayout(self.toolbar_bar)
-        toolbar.setContentsMargins(8, 5, 8, 5)
+        toolbar.setContentsMargins(12, 8, 12, 8)
+        toolbar.setSpacing(8)
         self.position = QLabel()
-        self.mode = QComboBox()
-        self.mode.addItem("单页", "single")
-        self.mode.addItem("纵向连续", "continuous")
-        preferred = self.mode.findData(self.reader.preferred_mode())
-        self.mode.setCurrentIndex(max(0, preferred))
-        self.active_mode = self.mode.currentData()
-        self.mode.currentIndexChanged.connect(self.mode_changed)
+        self.position.setObjectName("readerInfoBlock")
+        self.position.setFixedSize(70, 40)
+        self.position.setAlignment(Qt.AlignCenter)
+        self.active_mode = self.reader.preferred_mode()
+        if self.active_mode not in {"single", "continuous"}:
+            self.active_mode = "continuous"
+        self.mode = QPushButton()
+        self.mode.setProperty("readerBlock", True)
+        self.mode.setFixedSize(124, 40)
+        self._update_mode_button_text()
+        self.mode.clicked.connect(self.toggle_mode)
         smaller = QPushButton("−")
+        smaller.setProperty("readerBlock", True)
+        smaller.setFixedSize(44, 40)
         smaller.clicked.connect(lambda: self.change_zoom(0.9))
         larger = QPushButton("＋")
+        larger.setProperty("readerBlock", True)
+        larger.setFixedSize(44, 40)
         larger.clicked.connect(lambda: self.change_zoom(1.1))
         fit = QPushButton("适配大小")
+        fit.setProperty("readerBlock", True)
+        fit.setMinimumSize(112, 40)
         fit.clicked.connect(self.fit_size)
         self.jump = QSpinBox()
+        self.jump.setObjectName("readerJumpBlock")
+        self.jump.setMinimumSize(78, 40)
         self.jump.setRange(1, max(1, len(self.members)))
         self.jump.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         self.jump.valueChanged.connect(lambda value: self.go_page(value - 1))
         self.jump.editingFinished.connect(self._page_input_finished)
+        toolbar.addStretch(1)
         for widget in (
             self.position,
             self.mode,
@@ -180,10 +212,10 @@ class ReaderDialog(QDialog):
         self.scroll.setWidget(self.image)
         self.scroll.verticalScrollBar().valueChanged.connect(self.continuous_scrolled)
         root.addWidget(self.scroll, 1)
-        root.addWidget(self.toolbar_bar)
 
-        self.title_animation = QPropertyAnimation(self.title_bar, b"maximumHeight", self)
-        self.toolbar_animation = QPropertyAnimation(self.toolbar_bar, b"maximumHeight", self)
+        self._chrome_visible = True
+        self.title_animation = QPropertyAnimation(self.title_bar, b"pos", self)
+        self.toolbar_animation = QPropertyAnimation(self.toolbar_bar, b"pos", self)
         for animation in (self.title_animation, self.toolbar_animation):
             animation.setDuration(220)
             animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
@@ -197,23 +229,29 @@ class ReaderDialog(QDialog):
         self.proximity_timer.start()
         self.chrome_hide_timer.start()
         self.resume = QPushButton("回到上次观看位置", self)
+        self.resume.setStyleSheet(
+            "QPushButton { background: rgba(17, 17, 17, 150); color: white; "
+            "border: none; border-radius: 10px; padding: 8px 14px; } "
+            "QPushButton:hover { background: rgba(17, 17, 17, 205); }"
+        )
         self.resume.setMinimumWidth(self.resume.sizeHint().width() + 24)
         self.resume.setMinimumHeight(self.resume.sizeHint().height() + 8)
         self.resume.clicked.connect(self.resume_progress)
         self.resume.hide()
+        QTimer.singleShot(0, self._layout_chrome)
         QTimer.singleShot(0, self._initial_render)
 
     def _initial_render(self) -> None:
         self.mode_changed()
         if self.resume_page_index is not None and self.resume_page_index > 0:
             self.resume.show()
-            self.resume.move(24, 64)
+            self.resume.move(24, self.TITLE_BAR_HEIGHT + 10)
             QTimer.singleShot(5000, self.resume.hide)
 
     def resume_progress(self) -> None:
         if self.resume_page_index is not None:
             self.go_page(self.resume_page_index)
-            if self.mode.currentData() == "continuous" and self.continuous_labels:
+            if self.active_mode == "continuous" and self.continuous_labels:
                 # 图片懒加载会改变前面页面的高度，连续校正几次，确保从当前页
                 # 向前或向后跳转都能稳定落在启动时保存的位置。
                 for delay in (0, 50, 150):
@@ -243,12 +281,21 @@ class ReaderDialog(QDialog):
         self.image.setPixmap(pixmap)
         self._update_position_controls()
 
-    def mode_changed(self) -> None:
+    def _update_mode_button_text(self) -> None:
+        self.mode.setText("纵向连续" if self.active_mode == "continuous" else "单页阅读")
+
+    def toggle_mode(self) -> None:
+        next_mode = "single" if self.active_mode == "continuous" else "continuous"
+        self.mode_changed(next_mode)
+
+    def mode_changed(self, next_mode: str | None = None) -> None:
         if self.active_mode == "continuous" and self.continuous_labels:
             self.page_index = self._detect_continuous_page()
-        self.active_mode = self.mode.currentData()
-        self.reader.set_preferred_mode(self.mode.currentData())
-        if self.mode.currentData() == "continuous":
+        if next_mode is not None:
+            self.active_mode = next_mode
+        self._update_mode_button_text()
+        self.reader.set_preferred_mode(self.active_mode)
+        if self.active_mode == "continuous":
             self.build_continuous()
         else:
             self.scroll.takeWidget()
@@ -283,7 +330,7 @@ class ReaderDialog(QDialog):
         self.update_continuous_pages()
 
     def continuous_scrolled(self) -> None:
-        if self.mode.currentData() != "continuous":
+        if self.active_mode != "continuous":
             return
         self.update_continuous_pages()
 
@@ -338,7 +385,7 @@ class ReaderDialog(QDialog):
         if not self.members:
             return
         self.page_index = min(max(index, 0), len(self.members) - 1)
-        if self.mode.currentData() == "continuous" and self.continuous_labels:
+        if self.active_mode == "continuous" and self.continuous_labels:
             self.scroll.verticalScrollBar().setValue(self.continuous_labels[self.page_index].y())
         else:
             self.render()
@@ -351,7 +398,7 @@ class ReaderDialog(QDialog):
 
     def change_zoom(self, multiplier: float) -> None:
         self.zoom = min(4.0, max(0.2, self.zoom * multiplier))
-        if self.mode.currentData() == "continuous":
+        if self.active_mode == "continuous":
             for label in self.continuous_labels:
                 label.setProperty("loaded", False)
             self.update_continuous_pages()
@@ -377,7 +424,7 @@ class ReaderDialog(QDialog):
 
     def fit_size(self) -> None:
         self.zoom = 1.0
-        if self.mode.currentData() == "continuous":
+        if self.active_mode == "continuous":
             for label in self.continuous_labels:
                 label.setProperty("loaded", False)
             self.update_continuous_pages()
@@ -386,20 +433,47 @@ class ReaderDialog(QDialog):
 
     def _animate_panel(self, panel: str, visible: bool) -> None:
         if panel == "title":
-            widget, animation, height = self.title_bar, self.title_animation, 54
+            widget, animation, target = (
+                self.title_bar,
+                self.title_animation,
+                QPoint(0, 0 if visible else -self.TITLE_BAR_HEIGHT),
+            )
         else:
-            widget, animation, height = self.toolbar_bar, self.toolbar_animation, 58
-        target = height if visible else 0
-        if widget.maximumHeight() == target:
+            widget, animation, target = (
+                self.toolbar_bar,
+                self.toolbar_animation,
+                QPoint(
+                    0,
+                    self.height() - self.TOOLBAR_HEIGHT if visible else self.height(),
+                ),
+            )
+        if widget.pos() == target:
             return
         animation.stop()
-        animation.setStartValue(widget.maximumHeight())
+        animation.setStartValue(widget.pos())
         animation.setEndValue(target)
         animation.start()
 
     def _animate_chrome(self, visible: bool) -> None:
+        self._chrome_visible = visible
         self._animate_panel("title", visible)
         self._animate_panel("toolbar", visible)
+
+    def _layout_chrome(self) -> None:
+        if hasattr(self, "title_animation"):
+            self.title_animation.stop()
+            self.toolbar_animation.stop()
+        self.title_bar.resize(self.width(), self.TITLE_BAR_HEIGHT)
+        self.toolbar_bar.resize(self.width(), self.TOOLBAR_HEIGHT)
+        self.title_bar.move(0, 0 if self._chrome_visible else -self.TITLE_BAR_HEIGHT)
+        self.toolbar_bar.move(
+            0,
+            self.height() - self.TOOLBAR_HEIGHT if self._chrome_visible else self.height(),
+        )
+        self.title_bar.raise_()
+        self.toolbar_bar.raise_()
+        if hasattr(self, "resume"):
+            self.resume.raise_()
 
     def _page_input_active(self) -> bool:
         editor = self.jump.lineEdit()
@@ -419,14 +493,16 @@ class ReaderDialog(QDialog):
         cursor = self.mapFromGlobal(QCursor.pos())
         if not (0 <= cursor.x() < self.width() and 0 <= cursor.y() < self.height()):
             return
-        edge_zone = 70 if self.title_bar.maximumHeight() or self.toolbar_bar.maximumHeight() else 24
+        edge_zone = max(self.TITLE_BAR_HEIGHT, self.TOOLBAR_HEIGHT) + 12
+        if not self._chrome_visible:
+            edge_zone = 24
         if cursor.y() <= edge_zone or cursor.y() >= self.height() - edge_zone:
             self._animate_chrome(True)
             self.chrome_hide_timer.start()
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802
         if watched is self.scroll.viewport() and event.type() == QEvent.Type.Wheel:
-            if self.mode.currentData() == "single":
+            if self.active_mode == "single":
                 delta = event.angleDelta().y() or event.pixelDelta().y()
                 self.wheel_delta += delta
                 threshold = 120 if event.angleDelta().y() else 80
@@ -440,10 +516,11 @@ class ReaderDialog(QDialog):
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
         if hasattr(self, "scroll"):
+            self._layout_chrome()
             QTimer.singleShot(0, self._refit_after_resize)
 
     def _refit_after_resize(self) -> None:
-        if self.mode.currentData() == "continuous":
+        if self.active_mode == "continuous":
             for label in self.continuous_labels:
                 label.setProperty("loaded", False)
             self.update_continuous_pages()
@@ -451,7 +528,7 @@ class ReaderDialog(QDialog):
             self.render()
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
-        if self.mode.currentData() == "single":
+        if self.active_mode == "single":
             if event.key() in {Qt.Key_Right, Qt.Key_Down}:
                 self.next_page()
                 return
@@ -463,7 +540,7 @@ class ReaderDialog(QDialog):
     def done(self, result: int) -> None:
         if not self._progress_saved and self.members:
             offset = 0
-            if self.mode.currentData() == "continuous" and self.continuous_labels:
+            if self.active_mode == "continuous" and self.continuous_labels:
                 self.page_index = self._detect_continuous_page()
                 label = self.continuous_labels[self.page_index]
                 relative = max(0, self.scroll.verticalScrollBar().value() - label.y())

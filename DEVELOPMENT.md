@@ -2,6 +2,8 @@
 
 ## Ubuntu 开发
 
+Ubuntu Wayland 不允许应用自行设置顶层窗口坐标。通过 `hlibrary` 命令启动时，如果检测到 Wayland 和可用的 XWayland，开发版会自动改用 Qt `xcb` 后端，以便测试弹窗居中和主窗口位置恢复；这项兼容处理不影响 Windows 成品。
+
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -e '.[dev,build]'

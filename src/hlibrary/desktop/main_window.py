@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 import json
+import math
+import shutil
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QByteArray, QEvent, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QColor, QIcon, QMovie, QPainter, QPixmap
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QApplication,
+    QButtonGroup,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QGraphicsDropShadowEffect,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -22,9 +28,13 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QStackedWidget,
     QStyle,
+    QStyledItemDelegate,
+    QStyleOptionComboBox,
+    QStylePainter,
     QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
@@ -37,10 +47,21 @@ from hlibrary.cache import CacheService
 from hlibrary.catalog import CatalogQuery, CatalogService
 from hlibrary.config import APP_NAME
 from hlibrary.controller import LibraryController
-from hlibrary.desktop.dialogs import TagManagerDialog, WorkDetailDialog
+from hlibrary.desktop.dialogs import (
+    ResetSettingsDialog,
+    UploadResultDialog,
+    WorkDetailDialog,
+    open_tag_management,
+)
 from hlibrary.desktop.pairing_dialog import PairingDialog
 from hlibrary.desktop.reader_dialog import ReaderDialog
-from hlibrary.desktop.upload_dialog import UploadDialog
+from hlibrary.desktop.tag_widgets import (
+    AUTHOR_TAG_COLOR,
+    TAG_PREFIX_COLOR,
+    is_long_tag_category,
+    tag_chip_text,
+    tag_sort_category,
+)
 from hlibrary.library import LibraryService, ScanResult
 from hlibrary.media import MediaService
 from hlibrary.migration import MigrationService
@@ -48,6 +69,211 @@ from hlibrary.notifications import NotificationService
 from hlibrary.pairing import PairingService
 from hlibrary.reader import ReaderService
 from hlibrary.upload import UploadService
+
+
+class TagSummaryWidget(QWidget):
+    """Show as many chips as fit, followed by a compact +N summary."""
+
+    def __init__(self, entries: list[tuple[str, str]], parent=None) -> None:
+        super().__init__(parent)
+        self.setFixedHeight(31)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.chip_layout = QHBoxLayout(self)
+        self.chip_layout.setContentsMargins(0, 0, 0, 0)
+        self.chip_layout.setSpacing(6)
+        self.chips: list[QLabel] = []
+        for name, color in entries:
+            chip = self._chip(name, color)
+            self.chips.append(chip)
+            self.chip_layout.addWidget(chip)
+        self.more = self._chip("", "#777")
+        self.more.hide()
+        self.chip_layout.addWidget(self.more)
+        self.chip_layout.addStretch(1)
+        QTimer.singleShot(0, self._update_visible_chips)
+
+    @staticmethod
+    def _chip(name: str, color: str) -> QLabel:
+        chip = QLabel(tag_chip_text(name))
+        chip.setProperty("authorTag", color.casefold() == AUTHOR_TAG_COLOR.casefold())
+        chip.setFixedHeight(26)
+        chip.setAlignment(Qt.AlignCenter)
+        chip.setToolTip(name)
+        chip.setStyleSheet(
+            f"QLabel {{ padding: 0 8px; border-radius: 9px; "
+            f"background: {color}; color: white; }} "
+            f'QLabel[authorTag="true"] {{ background: {AUTHOR_TAG_COLOR}; color: white; }}'
+        )
+        return chip
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._update_visible_chips()
+
+    def _update_visible_chips(self) -> None:
+        available = self.width()
+        spacing = self.chip_layout.spacing()
+        widths = [chip.sizeHint().width() for chip in self.chips]
+        if sum(widths) + spacing * max(0, len(widths) - 1) <= available:
+            for chip in self.chips:
+                chip.show()
+            self.more.hide()
+            return
+        shown = 0
+        used = 0
+        for index, (_chip, width) in enumerate(zip(self.chips, widths, strict=True)):
+            hidden = len(self.chips) - index - 1
+            self.more.setText(f"+{hidden}")
+            required = used + (spacing if index else 0) + width
+            if hidden:
+                required += spacing + self.more.sizeHint().width()
+            if required > available:
+                break
+            used += (spacing if index else 0) + width
+            shown = index + 1
+        hidden = len(self.chips) - shown
+        for index, chip in enumerate(self.chips):
+            chip.setVisible(index < shown)
+        self.more.setText(f"+{hidden}")
+        self.more.setToolTip(f"还有 {hidden} 个 Tag")
+        self.more.setVisible(hidden > 0)
+
+
+class GroupedTagButton(QPushButton):
+    """Render a disambiguating group prefix separately from the Tag name."""
+
+    def __init__(self, display_name: str, parent=None) -> None:
+        super().__init__(parent)
+        prefix, separator, name = display_name.partition("：")
+        self.prefix_text = prefix + separator
+        self.name_text = name
+        self.setText("")
+        self.setAccessibleName(display_name)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+        metrics = painter.fontMetrics()
+        available = max(1, self.contentsRect().width() - 24)
+        full_prefix_width = metrics.horizontalAdvance(self.prefix_text)
+        full_name_width = metrics.horizontalAdvance(self.name_text)
+        full_text_fits = full_prefix_width + full_name_width <= available
+        if full_text_fits:
+            prefix_limit = full_prefix_width
+        else:
+            reserved_name_width = min(full_name_width, max(35, available // 2))
+            prefix_limit = max(1, available - reserved_name_width)
+        prefix = (
+            self.prefix_text
+            if full_text_fits
+            else metrics.elidedText(self.prefix_text, Qt.ElideRight, prefix_limit)
+        )
+        prefix_width = metrics.horizontalAdvance(prefix)
+        name = metrics.elidedText(
+            self.name_text,
+            Qt.ElideRight,
+            max(1, available - prefix_width),
+        )
+        name_width = metrics.horizontalAdvance(name)
+        left = self.contentsRect().center().x() - (prefix_width + name_width) // 2
+        painter.setPen(QColor(TAG_PREFIX_COLOR))
+        painter.drawText(
+            left,
+            self.contentsRect().top(),
+            prefix_width,
+            self.contentsRect().height(),
+            Qt.AlignVCenter,
+            prefix,
+        )
+        painter.setPen(QColor("white") if self.isChecked() else self.palette().text().color())
+        painter.drawText(
+            left + prefix_width,
+            self.contentsRect().top(),
+            name_width,
+            self.contentsRect().height(),
+            Qt.AlignVCenter,
+            name,
+        )
+
+
+class NotificationButton(QPushButton):
+    """Square notification button with a compact unread badge."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._unread_count = 0
+
+    def set_unread_count(self, count: int) -> None:
+        self._unread_count = max(0, count)
+        self.setToolTip(f"通知（{count} 条未读）" if count else "通知")
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        if not self._unread_count:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        diameter = 18
+        badge = self.rect().adjusted(
+            self.width() - diameter - 2,
+            2,
+            -2,
+            2 + diameter - self.height(),
+        )
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#d93025"))
+        painter.drawEllipse(badge)
+        painter.setPen(Qt.white)
+        font = painter.font()
+        font.setPixelSize(10)
+        font.setBold(True)
+        painter.setFont(font)
+        text = "99+" if self._unread_count > 99 else str(self._unread_count)
+        painter.drawText(badge, Qt.AlignCenter, text)
+
+
+class NotificationListWidget(QListWidget):
+    resized = Signal()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self.resized.emit()
+
+
+class WorkListWidget(QListWidget):
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if self.itemAt(event.position().toPoint()) is None:
+            self.clearSelection()
+            self.setCurrentItem(None)
+        super().mousePressEvent(event)
+
+
+class CenteredComboDelegate(QStyledItemDelegate):
+    def initStyleOption(self, option, index) -> None:  # noqa: N802
+        super().initStyleOption(option, index)
+        option.displayAlignment = Qt.AlignCenter
+
+
+class CenteredComboBox(QComboBox):
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setItemDelegate(CenteredComboDelegate(self))
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QStylePainter(self)
+        option = QStyleOptionComboBox()
+        self.initStyleOption(option)
+        painter.drawComplexControl(QStyle.CC_ComboBox, option)
+        text_rect = self.style().subControlRect(
+            QStyle.CC_ComboBox,
+            option,
+            QStyle.SC_ComboBoxEditField,
+            self,
+        )
+        painter.setPen(option.palette.text().color())
+        painter.drawText(text_rect.adjusted(2, 0, -2, 0), Qt.AlignCenter, self.currentText())
 
 
 class MainWindow(QMainWindow):
@@ -67,6 +293,7 @@ class MainWindow(QMainWindow):
         cache: CacheService,
         notifications: NotificationService,
         appearance: AppearanceService,
+        server=None,
     ) -> None:
         super().__init__()
         self.controller = controller
@@ -80,9 +307,10 @@ class MainWindow(QMainWindow):
         self.cache = cache
         self.notifications = notifications
         self.appearance = appearance
+        self.server = server
         self._startup_backup_checked = False
         self.current_page = 1
-        self.selected_kinds: set[str] = set()
+        self.selected_kinds: set[str] = {"comic"}
         self.selected_tag_ids: set[int] = set()
         self.search_timer = QTimer(self)
         self.search_timer.setSingleShot(True)
@@ -94,50 +322,115 @@ class MainWindow(QMainWindow):
         self._allow_close = False
 
         root = QWidget(self)
-        layout = QHBoxLayout(root)
+        layout = QVBoxLayout(root)
         layout.setContentsMargins(0, 0, 0, 0)
-
-        self.navigation = QListWidget()
-        self.navigation.setFixedWidth(120)
-        self.navigation.addItems(["作品", "通知", "设置"])
-        self.navigation.setCurrentRow(0)
+        layout.setSpacing(0)
 
         self.pages = QStackedWidget()
         self.pages.addWidget(self._build_home_page())
         self.pages.addWidget(self._build_notifications_page())
         self.pages.addWidget(self._build_settings_page())
-        self.navigation.currentRowChanged.connect(self._navigation_changed)
 
-        layout.addWidget(self.navigation)
+        layout.addWidget(self._build_theme_bar())
         layout.addWidget(self.pages, 1)
         self.setCentralWidget(root)
+        for widget in (root, *root.findChildren(QWidget)):
+            widget.installEventFilter(self)
         controller.scan_started.connect(self._scan_started)
         controller.scan_finished.connect(self._scan_finished)
         controller.scan_failed.connect(self._scan_failed)
+        self._restore_window_geometry()
         self.refresh()
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        if (
+            event.type() == QEvent.MouseButtonPress
+            and event.button() == Qt.LeftButton
+            and self.work_list.currentItem() is not None
+            and self._is_main_window_blank_click(watched, event)
+        ):
+            self.work_list.clearSelection()
+            self.work_list.setCurrentItem(None)
+        return super().eventFilter(watched, event)
+
+    def _is_main_window_blank_click(self, watched, event) -> bool:
+        widget = watched if isinstance(watched, QWidget) else None
+        while widget is not None and widget is not self:
+            if isinstance(widget, WorkListWidget):
+                point = widget.viewport().mapFromGlobal(event.globalPosition().toPoint())
+                return widget.itemAt(point) is None
+            if isinstance(
+                widget,
+                (QAbstractButton, QLineEdit, QComboBox, QSpinBox, QListWidget),
+            ):
+                return False
+            widget = widget.parentWidget()
+        return True
+
+    def _build_theme_bar(self) -> QWidget:
+        bar = QWidget()
+        bar.setObjectName("mainThemeBar")
+        bar.setFixedHeight(66)
+        bar.setStyleSheet(
+            "QWidget#mainThemeBar { background: #25212b; "
+            "border-bottom: 3px solid #00a6a6; } "
+            "QPushButton#brandButton { border: none; padding: 4px 8px; "
+            "font-size: 20px; font-weight: 700; text-align: left; color: #f5f1f8; }"
+        )
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(16, 10, 16, 10)
+        row.setSpacing(10)
+        self.brand_button = QPushButton("H库")
+        self.brand_button.setObjectName("brandButton")
+        self.brand_button.setIcon(self.style().standardIcon(QStyle.SP_DirHomeIcon))
+        self.brand_button.setIconSize(QSize(30, 30))
+        self.brand_button.setToolTip("返回作品")
+        self.brand_button.clicked.connect(lambda: self._show_page(0))
+        self.notification_button = NotificationButton()
+        self.notification_button.setIcon(self.style().standardIcon(QStyle.SP_MessageBoxInformation))
+        self.notification_button.setIconSize(QSize(22, 22))
+        self.notification_button.setFixedSize(44, 44)
+        self.notification_button.clicked.connect(lambda: self._show_page(1))
+        self.settings_button = QPushButton()
+        self.settings_button.setIcon(self.style().standardIcon(QStyle.SP_FileDialogDetailedView))
+        self.settings_button.setIconSize(QSize(22, 22))
+        self.settings_button.setFixedSize(44, 44)
+        self.settings_button.setToolTip("设置")
+        self.settings_button.clicked.connect(lambda: self._show_page(2))
+        row.addWidget(self.brand_button)
+        row.addStretch(1)
+        row.addWidget(self.notification_button)
+        row.addWidget(self.settings_button)
+        return bar
+
+    def _restore_window_geometry(self) -> None:
+        encoded = self.catalog.setting("windows_main_geometry", "")
+        if encoded:
+            self.restoreGeometry(QByteArray.fromBase64(encoded.encode("ascii")))
+        QTimer.singleShot(0, self._ensure_window_on_screen)
+
+    def _ensure_window_on_screen(self) -> None:
+        frame = self.frameGeometry()
+        if any(screen.availableGeometry().intersects(frame) for screen in QApplication.screens()):
+            return
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            frame.moveCenter(screen.availableGeometry().center())
+            self.move(frame.topLeft())
+
+    def _save_window_geometry(self) -> None:
+        encoded = bytes(self.saveGeometry().toBase64()).decode("ascii")
+        self.catalog.set_setting("windows_main_geometry", encoded)
 
     def _build_home_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        title = QLabel("作品")
-        title.setStyleSheet("font-size: 32px; font-weight: 700;")
-        actions = QHBoxLayout()
-        self.root_label = QLabel("尚未设置漫画目录")
-        self.root_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.choose_button = QPushButton("选择漫画目录")
-        self.choose_button.clicked.connect(self.choose_root)
-        self.scan_button = QPushButton("重新扫描")
-        self.scan_button.clicked.connect(self.controller.request_scan)
-        actions.addWidget(self.root_label, 1)
-        actions.addWidget(self.choose_button)
-        actions.addWidget(self.scan_button)
-
-        search_row = QHBoxLayout()
         self.search_edit = QLineEdit()
+        self.search_edit.setFixedHeight(48)
         self.search_edit.setPlaceholderText("搜索编号或标题，多个关键词用英文逗号分隔")
         self.search_edit.textChanged.connect(self._search_changed)
         self.search_edit.returnPressed.connect(self._search_now)
-        self.sort_box = QComboBox()
+        self.sort_box = CenteredComboBox()
         self.sort_box.addItem("最近添加", "added")
         self.sort_box.addItem("文件名/编号", "file_name")
         self.sort_box.addItem("标题", "title")
@@ -151,20 +444,27 @@ class MainWindow(QMainWindow):
         self.direction_button.setText("升序 ↑" if ascending else "降序 ↓")
         self.sort_box.currentIndexChanged.connect(self._filters_changed)
         self.direction_button.clicked.connect(self._direction_changed)
-        manage_tags = QPushButton("管理 Tag")
-        manage_tags.clicked.connect(self.open_tag_manager)
         upload = QPushButton("上传")
         upload.clicked.connect(self.choose_uploads)
-        search_row.addWidget(self.search_edit, 1)
-        search_row.addWidget(self.sort_box)
-        search_row.addWidget(self.direction_button)
-        search_row.addWidget(manage_tags)
-        search_row.addWidget(upload)
+        self.refresh_button = QPushButton("刷新")
+        self.refresh_button.clicked.connect(self.controller.request_scan)
+        for control in (self.sort_box, self.direction_button, upload, self.refresh_button):
+            control.setFixedHeight(40)
+        control_row = QHBoxLayout()
+        control_row.addWidget(self.sort_box)
+        control_row.addWidget(self.direction_button)
+        control_row.addWidget(upload)
+        control_row.addWidget(self.refresh_button)
+        control_row.addStretch(1)
 
         self.scan_status = QLabel("等待扫描")
         content_row = QHBoxLayout()
         filters = self._build_filter_panel()
-        self.work_list = QListWidget()
+        self.work_list = WorkListWidget()
+        self.work_list.setStyleSheet(
+            "QListWidget::item:selected { background: transparent; color: palette(text); }"
+        )
+        self.work_list.currentItemChanged.connect(self._work_selection_changed)
         self.work_list.itemActivated.connect(self.open_work)
         page_row = QHBoxLayout()
         self.first_page = QPushButton("首页")
@@ -191,9 +491,8 @@ class MainWindow(QMainWindow):
         ):
             page_row.addWidget(widget)
         page_row.addStretch(1)
-        layout.addWidget(title)
-        layout.addLayout(actions)
-        layout.addLayout(search_row)
+        layout.addWidget(self.search_edit)
+        layout.addLayout(control_row)
         layout.addWidget(self.scan_status)
         content_row.addWidget(filters)
         content_row.addWidget(self.work_list, 1)
@@ -202,37 +501,9 @@ class MainWindow(QMainWindow):
         return page
 
     def _build_filter_panel(self) -> QWidget:
-        panel = QGroupBox("Tag 筛选")
+        panel = QGroupBox()
         panel.setFixedWidth(210)
         layout = QVBoxLayout(panel)
-        self.tag_search = QLineEdit()
-        self.tag_search.setPlaceholderText("搜索 Tag 或分组")
-        self.tag_search.textChanged.connect(self._refresh_filter_tags)
-        layout.addWidget(self.tag_search)
-        kind_row = QHBoxLayout()
-        self.comic_filter = QPushButton("漫画")
-        self.illustration_filter = QPushButton("插画")
-        for button, kind in (
-            (self.comic_filter, "comic"),
-            (self.illustration_filter, "illustration"),
-        ):
-            button.setCheckable(True)
-            button.setStyleSheet(
-                "QPushButton { background: #006a6a; color: white; border-radius: 10px; } "
-                "QPushButton:checked { background: #004f4f; }"
-            )
-            button.toggled.connect(lambda checked, value=kind: self._kind_toggled(value, checked))
-            kind_row.addWidget(button)
-        layout.addLayout(kind_row)
-        self.rating_filter = QComboBox()
-        self.rating_filter.addItem("全部星级", ("any", 0))
-        self.rating_filter.addItem("未评价", ("unrated", 0))
-        for rating in range(1, 4):
-            self.rating_filter.addItem("★" * rating, ("exact", rating))
-        for rating in range(1, 4):
-            self.rating_filter.addItem("★" * rating + " 及以上", ("at_least", rating))
-        self.rating_filter.currentIndexChanged.connect(self._filters_changed)
-        layout.addWidget(self.rating_filter)
         mode_row = QHBoxLayout()
         self.any_tags = QRadioButton("任意匹配")
         self.all_tags = QRadioButton("全部匹配")
@@ -241,40 +512,139 @@ class MainWindow(QMainWindow):
         mode_row.addWidget(self.any_tags)
         mode_row.addWidget(self.all_tags)
         layout.addLayout(mode_row)
+        self.tag_search = QLineEdit()
+        self.tag_search.setPlaceholderText("搜索 Tag 或分组")
+        self.tag_search.textChanged.connect(self._refresh_filter_tags)
+        layout.addWidget(self.tag_search)
         tag_content = QWidget()
-        self.tag_filter_layout = QVBoxLayout(tag_content)
+        self.tag_filter_layout = QGridLayout(tag_content)
         self.tag_filter_layout.setContentsMargins(0, 0, 0, 0)
+        self.tag_filter_layout.setAlignment(Qt.AlignTop)
+        self.comic_filter = QPushButton("漫画")
+        self.illustration_filter = QPushButton("插画")
+        self.kind_filter_group = QButtonGroup(self)
+        self.kind_filter_group.setExclusive(True)
+        for column, (button, kind) in enumerate(
+            (
+                (self.comic_filter, "comic"),
+                (self.illustration_filter, "illustration"),
+            )
+        ):
+            button.setCheckable(True)
+            self.kind_filter_group.addButton(button)
+            button.setChecked(kind in self.selected_kinds)
+            button.setStyleSheet(self._tag_button_style("#006a6a"))
+            button.toggled.connect(lambda checked, value=kind: self._kind_toggled(value, checked))
+            self.tag_filter_layout.addWidget(button, 0, column)
+        self.custom_tag_buttons: list[QPushButton] = []
         tag_scroll = QScrollArea()
         tag_scroll.setWidgetResizable(True)
+        tag_scroll.setFrameShape(QFrame.NoFrame)
+        tag_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         tag_scroll.setWidget(tag_content)
         layout.addWidget(tag_scroll, 1)
+        self.rating_filter = CenteredComboBox()
+        self.rating_filter.addItem("全部星级", ("any", 0))
+        self.rating_filter.addItem("未评价", ("unrated", 0))
+        for rating in range(1, 4):
+            self.rating_filter.addItem("★" * rating, ("exact", rating))
+        for rating in range(1, 4):
+            self.rating_filter.addItem("★" * rating + " 及以上", ("at_least", rating))
+        self.rating_filter.currentIndexChanged.connect(self._filters_changed)
+        layout.addWidget(self.rating_filter)
         clear = QPushButton("清除全部筛选")
         clear.clicked.connect(self.clear_filters)
         layout.addWidget(clear)
+        manage_tags = QPushButton("管理")
+        manage_tags.clicked.connect(self.open_tag_manager)
+        layout.addWidget(manage_tags)
         self._refresh_filter_tags()
         return panel
 
+    @staticmethod
+    def _tag_button_style(color: str) -> str:
+        return (
+            "QPushButton { background: transparent; color: palette(text); "
+            f"border: 1px solid {color}; border-radius: 15px; "
+            "min-height: 30px; max-height: 30px; padding: 0 12px; } "
+            f"QPushButton:checked {{ background: {color}; color: white; font-weight: 700; }}"
+        )
+
     def _refresh_filter_tags(self) -> None:
-        while self.tag_filter_layout.count():
-            item = self.tag_filter_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        for button in self.custom_tag_buttons:
+            self.tag_filter_layout.removeWidget(button)
+            button.deleteLater()
+        self.custom_tag_buttons.clear()
+        system_search = self.tag_search.text().strip().casefold()
+        self.comic_filter.setVisible(not system_search or system_search in "漫画".casefold())
+        self.illustration_filter.setVisible(not system_search or system_search in "插画".casefold())
         all_tags = self.catalog.list_tags()
+        classified_tags = []
         for tag in self.catalog.list_tags(self.tag_search.text()):
-            button = QPushButton(self.catalog.tag_display_name(tag, all_tags))
+            display_name = self.catalog.tag_display_name(tag, all_tags)
+            author = self.catalog.is_author_tag(tag)
+            category = tag_sort_category(
+                display_name,
+                self.tag_search.fontMetrics(),
+                author=author,
+            )
+            long_tag = is_long_tag_category(category)
+            classified_tags.append((category, tag, display_name, long_tag))
+        classified_tags.sort(key=lambda entry: entry[0])
+        row = 1
+        column = 0
+        for category, tag, display_name, full_row in classified_tags:
+            button = GroupedTagButton(display_name) if "：" in display_name else QPushButton()
+            button.setToolTip(display_name)
+            button.setProperty(
+                "tagLayoutClass",
+                (
+                    "author"
+                    if category == 0
+                    else "prefixed"
+                    if category == 1
+                    else "long"
+                    if category == 2
+                    else "short"
+                ),
+            )
+            available_text_width = 158 if full_row else 68
+            if not isinstance(button, GroupedTagButton):
+                button.setText(
+                    button.fontMetrics().elidedText(
+                        display_name,
+                        Qt.ElideRight,
+                        available_text_width,
+                    )
+                )
+            button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
             button.setCheckable(True)
             button.setChecked(tag.id in self.selected_tag_ids)
             button.setProperty("grouped", tag.group_id is not None)
-            button.setStyleSheet(
-                "QPushButton { background: #6750a4; color: white; border-radius: 10px; }"
-                if tag.group_id is not None
-                else "QPushButton { background: #777; color: white; border-radius: 10px; }"
+            color = (
+                AUTHOR_TAG_COLOR
+                if self.catalog.is_author_tag(tag)
+                else "#6750a4"
+                if tag.group_id
+                else "#777"
             )
+            button.setStyleSheet(self._tag_button_style(color))
             button.toggled.connect(
                 lambda checked, tag_id=tag.id: self._tag_filter_toggled(tag_id, checked)
             )
-            self.tag_filter_layout.addWidget(button)
-        self.tag_filter_layout.addStretch(1)
+            if full_row:
+                if column:
+                    row += 1
+                    column = 0
+                self.tag_filter_layout.addWidget(button, row, 0, 1, 2)
+                row += 1
+            else:
+                self.tag_filter_layout.addWidget(button, row, column)
+                column += 1
+                if column == 2:
+                    row += 1
+                    column = 0
+            self.custom_tag_buttons.append(button)
 
     def _kind_toggled(self, kind: str, checked: bool) -> None:
         if checked:
@@ -291,10 +661,8 @@ class MainWindow(QMainWindow):
         self._filters_changed()
 
     def clear_filters(self) -> None:
-        self.selected_kinds.clear()
         self.selected_tag_ids.clear()
-        self.comic_filter.setChecked(False)
-        self.illustration_filter.setChecked(False)
+        self.comic_filter.setChecked(True)
         self.rating_filter.setCurrentIndex(0)
         self.any_tags.setChecked(True)
         self.tag_search.clear()
@@ -303,30 +671,52 @@ class MainWindow(QMainWindow):
 
     def _build_notifications_page(self) -> QWidget:
         page = QWidget()
-        layout = QVBoxLayout(page)
+        page_layout = QVBoxLayout(page)
+        content = QWidget()
+        content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        layout = QVBoxLayout(content)
         title = QLabel("通知")
+        title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("font-size: 32px; font-weight: 700;")
-        self.notification_list = QListWidget()
+        self.notification_list = NotificationListWidget()
+        self.notification_list.setSpacing(0)
+        self.notification_list.setStyleSheet(
+            "QListWidget { background: transparent; border: 1px solid #6750a4; "
+            "border-radius: 10px; padding: 0; } "
+            "QListWidget::item, QListWidget::item:selected { "
+            "background: transparent; border: none; }"
+        )
         self.notification_list.itemActivated.connect(self.open_notification)
+        self.notification_list.resized.connect(
+            lambda: QTimer.singleShot(0, self._fill_empty_notification_rows)
+        )
         notification_actions = QHBoxLayout()
         delete_selected = QPushButton("删除所选通知")
         delete_selected.clicked.connect(self.delete_notification)
         clear = QPushButton("清空通知")
         clear.clicked.connect(self.clear_notifications)
-        notification_actions.addWidget(delete_selected)
-        notification_actions.addWidget(clear)
-        notification_actions.addStretch(1)
+        delete_selected.setFixedHeight(42)
+        clear.setFixedHeight(42)
+        notification_actions.addWidget(delete_selected, 1)
+        notification_actions.addWidget(clear, 1)
         layout.addWidget(title)
         layout.addLayout(notification_actions)
         layout.addWidget(self.notification_list, 1)
+        page_layout.addWidget(content, 1)
         return page
 
     def _build_settings_page(self) -> QWidget:
         page = QWidget()
-        layout = QVBoxLayout(page)
+        page_layout = QHBoxLayout(page)
+        content = QWidget()
+        content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        layout = QVBoxLayout(content)
         title = QLabel("设置")
+        title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("font-size: 32px; font-weight: 700;")
         self.settings_root = QLabel()
+        self.settings_root.setAlignment(Qt.AlignCenter)
+        self.settings_root.setWordWrap(True)
         self.settings_root.setTextInteractionFlags(Qt.TextSelectableByMouse)
         choose = QPushButton("更换并迁移作品目录")
         choose.clicked.connect(self.migrate_root)
@@ -336,9 +726,9 @@ class MainWindow(QMainWindow):
         manual_backup.clicked.connect(self.create_manual_backup)
         restore_backup = QPushButton("恢复备份")
         restore_backup.clicked.connect(self.restore_backup)
-        cache_row = QHBoxLayout()
         self.cache_usage = QLabel()
-        self.cache_limit = QComboBox()
+        self.cache_usage.setAlignment(Qt.AlignCenter)
+        self.cache_limit = CenteredComboBox()
         for label, value in (
             ("1 GB", 1024**3),
             ("2 GB", 2 * 1024**3),
@@ -350,29 +740,108 @@ class MainWindow(QMainWindow):
         self.cache_limit.currentIndexChanged.connect(self.change_cache_limit)
         clear_cache = QPushButton("清理缩略图缓存")
         clear_cache.clicked.connect(self.clear_cache)
-        cache_row.addWidget(self.cache_usage)
-        cache_row.addWidget(self.cache_limit)
-        cache_row.addWidget(clear_cache)
-        theme_row = QHBoxLayout()
-        theme_row.addWidget(QLabel("外观主题"))
-        self.theme_box = QComboBox()
+        theme_label = QLabel("外观主题")
+        theme_label.setAlignment(Qt.AlignCenter)
+        self.theme_box = CenteredComboBox()
         self.theme_box.addItem("跟随系统", "system")
         self.theme_box.addItem("浅色", "light")
         self.theme_box.addItem("深色", "dark")
         self.theme_box.setCurrentIndex(max(0, self.theme_box.findData(self.appearance.theme())))
         self.theme_box.currentIndexChanged.connect(self.change_theme)
-        theme_row.addWidget(self.theme_box)
-        theme_row.addStretch(1)
+        for button in (choose, pair, manual_backup, restore_backup, clear_cache):
+            button.setFixedHeight(42)
         layout.addWidget(title)
         layout.addWidget(self.settings_root)
-        layout.addWidget(choose, alignment=Qt.AlignLeft)
-        layout.addWidget(pair, alignment=Qt.AlignLeft)
-        layout.addWidget(manual_backup, alignment=Qt.AlignLeft)
-        layout.addWidget(restore_backup, alignment=Qt.AlignLeft)
-        layout.addLayout(cache_row)
-        layout.addLayout(theme_row)
+        layout.addWidget(choose)
+        layout.addWidget(pair)
+        layout.addWidget(manual_backup)
+        layout.addWidget(restore_backup)
+        layout.addWidget(self.cache_usage)
+        layout.addWidget(self.cache_limit)
+        layout.addWidget(clear_cache)
+        layout.addWidget(theme_label)
+        layout.addWidget(self.theme_box)
         layout.addStretch(1)
+        reset = QPushButton("恢复所有设置")
+        reset.setFixedHeight(46)
+        reset.setStyleSheet(
+            "QPushButton { background: #d93025; color: white; "
+            "border: 2px solid #d93025; border-radius: 10px; "
+            "font-weight: 700; padding: 8px 12px; } "
+            "QPushButton:hover { background: #b3261e; }"
+        )
+        reset.clicked.connect(self.reset_all_settings)
+        layout.addWidget(reset)
+        page_layout.addWidget(content, 1)
         return page
+
+    def reset_all_settings(self) -> None:
+        if ResetSettingsDialog(self).exec() != QDialog.Accepted:
+            return
+        root = self.library.library_root()
+        if root is None:
+            QMessageBox.critical(self, "恢复设置失败", "尚未设置作品目录")
+            return
+        database = self.catalog.database
+        rollback = database.path.with_name(database.path.name + ".reset-rollback")
+        self.controller.pause_watching()
+        self.controller.wait_until_idle()
+        if self.server is not None:
+            self.server.stop()
+        try:
+            database.close()
+            rollback.unlink(missing_ok=True)
+            shutil.copy2(database.path, rollback)
+            database.path.unlink()
+            for suffix in ("-wal", "-shm"):
+                Path(str(database.path) + suffix).unlink(missing_ok=True)
+            database.reopen()
+            database.initialize(__version__)
+            self.library.configure_root(root)
+            CatalogService(database)
+            self.library.scan()
+            self.notifications.clear()
+            removed_backups = self.backups.delete_all()
+            removed_cache = self.cache.clear()
+        except Exception as exc:
+            database.close()
+            if rollback.exists():
+                database.path.unlink(missing_ok=True)
+                for suffix in ("-wal", "-shm"):
+                    Path(str(database.path) + suffix).unlink(missing_ok=True)
+                rollback.replace(database.path)
+            database.reopen()
+            database.initialize(__version__)
+            self.controller.start()
+            if self.server is not None:
+                self.server.start()
+            QMessageBox.critical(self, "恢复设置失败", str(exc))
+            return
+        rollback.unlink(missing_ok=True)
+        self._startup_backup_checked = True
+        self.controller.start()
+        if self.server is not None:
+            self.server.start()
+        app = QApplication.instance()
+        if app is not None:
+            apply_theme(app, "system")
+        self.selected_tag_ids.clear()
+        self.selected_kinds = {"comic"}
+        self.comic_filter.setChecked(True)
+        self.search_edit.clear()
+        self.tag_search.clear()
+        self.rating_filter.setCurrentIndex(0)
+        self.any_tags.setChecked(True)
+        self.theme_box.setCurrentIndex(max(0, self.theme_box.findData("system")))
+        self.cache_limit.setCurrentIndex(max(0, self.cache_limit.findData(self.cache.limit())))
+        self._refresh_filter_tags()
+        self.refresh()
+        QMessageBox.information(
+            self,
+            "恢复完成",
+            f"数据库已重建，删除 {removed_backups} 个备份文件和 "
+            f"{removed_cache} 个缓存文件。作品已重新扫描。",
+        )
 
     def choose_root(self) -> None:
         current = self.library.library_root()
@@ -487,33 +956,67 @@ class MainWindow(QMainWindow):
     def refresh(self) -> None:
         root = self.library.library_root()
         root_text = str(root) if root else "尚未设置漫画目录"
-        self.root_label.setText(root_text)
         self.settings_root.setText(f"当前漫画目录：{root_text}")
         self.cache_usage.setText(f"缩略图缓存：{self.cache.usage() / 1024 / 1024:.1f} MB")
-        self.choose_button.setEnabled(root is None)
-        self.scan_button.setEnabled(root is not None)
+        self.refresh_button.setEnabled(root is not None)
 
         self.refresh_works()
 
         self.notification_list.clear()
         notifications = self.library.list_notifications()
+        self._notifications_empty = not notifications
         for item in notifications:
-            row = QListWidgetItem(f"{item.title}  ·  {item.created_at:%Y-%m-%d %H:%M}")
+            row = QListWidgetItem()
             row.setData(Qt.UserRole, item.id)
             row.setData(Qt.UserRole + 1, item.details_json)
             row.setData(Qt.UserRole + 2, item.kind)
+            row.setData(Qt.UserRole + 3, item.read_at is not None)
+            row.setSizeHint(QSize(0, 54))
             self.notification_list.addItem(row)
+            notification_row = QLabel(f"{item.title}  ·  {item.created_at:%Y-%m-%d %H:%M}")
+            notification_row.setAlignment(Qt.AlignCenter)
+            notification_row.setContentsMargins(14, 0, 14, 0)
+            self._style_notification_row(notification_row, item.read_at is not None)
+            self.notification_list.setItemWidget(row, notification_row)
         if not notifications:
-            self.notification_list.addItem("暂无通知")
+            self._fill_empty_notification_rows()
         unread = self.notifications.unread_count()
-        self.navigation.item(1).setText(f"通知 {unread}" if unread else "通知")
+        self.notification_button.set_unread_count(unread)
         self.notification_count_changed.emit(unread)
 
-    def _navigation_changed(self, index: int) -> None:
+    def _show_page(self, index: int) -> None:
         self.pages.setCurrentIndex(index)
-        if index == 1:
-            self.notifications.mark_all_read()
-            self.refresh()
+
+    @staticmethod
+    def _style_notification_row(widget: QWidget, read: bool) -> None:
+        background = "#25212b" if read else "transparent"
+        widget.setStyleSheet(
+            f"background: {background}; border: none; "
+            "border-bottom: 1px solid #51465f; border-radius: 0;"
+        )
+
+    def _fill_empty_notification_rows(self) -> None:
+        if not getattr(self, "_notifications_empty", False):
+            return
+        height = self.notification_list.viewport().height()
+        if height <= 0:
+            return
+        count = max(1, math.ceil(height / 54))
+        base_height, remainder = divmod(height, count)
+        current_height = sum(
+            self.notification_list.item(index).sizeHint().height()
+            for index in range(self.notification_list.count())
+        )
+        if self.notification_list.count() == count and current_height == height:
+            return
+        self.notification_list.clear()
+        for index in range(count):
+            placeholder = QListWidgetItem()
+            placeholder.setSizeHint(QSize(0, base_height + (1 if index < remainder else 0)))
+            self.notification_list.addItem(placeholder)
+            placeholder_row = QFrame()
+            self._style_notification_row(placeholder_row, False)
+            self.notification_list.setItemWidget(placeholder, placeholder_row)
 
     def delete_notification(self) -> None:
         item = self.notification_list.currentItem()
@@ -527,13 +1030,24 @@ class MainWindow(QMainWindow):
             self.refresh()
 
     def open_notification(self, item: QListWidgetItem) -> None:
-        if item.data(Qt.UserRole) is None:
+        notification_id = item.data(Qt.UserRole)
+        if notification_id is None:
             return
+        details_json = item.data(Qt.UserRole + 1)
+        kind = item.data(Qt.UserRole + 2)
+        if not item.data(Qt.UserRole + 3):
+            self.notifications.mark_read(notification_id)
+            item.setData(Qt.UserRole + 3, True)
+            row_widget = self.notification_list.itemWidget(item)
+            if row_widget is not None:
+                self._style_notification_row(row_widget, True)
+            unread = self.notifications.unread_count()
+            self.notification_button.set_unread_count(unread)
+            self.notification_count_changed.emit(unread)
         try:
-            details = json.loads(item.data(Qt.UserRole + 1))
+            details = json.loads(details_json)
         except (TypeError, json.JSONDecodeError):
             details = []
-        kind = item.data(Qt.UserRole + 2)
         if kind == "files_renamed":
             text = "\n".join(f"{value['old']} → {value['new']}" for value in details)
         else:
@@ -574,13 +1088,31 @@ class MainWindow(QMainWindow):
             display_title = work.title or Path(work.file_name).stem
             identity = work.number if work.kind == "comic" else work.file_name
             pending = " · 内容已替换，待确认" if work.status == "replacement_pending" else ""
-            tag_names = [self.catalog.tag_display_name(tag, all_tags) for tag in work.tags]
+            custom_tag_entries = [
+                (
+                    self.catalog.tag_display_name(tag, all_tags),
+                    AUTHOR_TAG_COLOR
+                    if self.catalog.is_author_tag(tag)
+                    else "#6750a4"
+                    if tag.group_id is not None
+                    else "#777",
+                    tag_sort_category(
+                        self.catalog.tag_display_name(tag, all_tags),
+                        self.fontMetrics(),
+                        author=self.catalog.is_author_tag(tag),
+                    ),
+                )
+                for tag in work.tags
+            ]
+            custom_tag_entries.sort(key=lambda entry: entry[2])
+            tag_entries = [(kind, "#006a6a"), *[entry[:2] for entry in custom_tag_entries]]
             # 作品内容完全由自定义 row_widget 绘制。列表项自身不能再带
             # 旧版文本，否则部分 Windows 样式会把文字画在封面左侧。
             item = QListWidgetItem()
             item.setData(Qt.UserRole, work.id)
             item.setSizeHint(QSize(0, 132))
             row_widget = QWidget()
+            row_widget.setObjectName("workRow")
             row_layout = QHBoxLayout(row_widget)
             row_layout.setContentsMargins(12, 7, 12, 7)
             image = QLabel()
@@ -610,23 +1142,7 @@ class MainWindow(QMainWindow):
             title.setStyleSheet("font-size: 18px; font-weight: 700")
             text_layout.addWidget(title)
             text_layout.addWidget(QLabel(identity or ""))
-            chips = QWidget()
-            chip_layout = QHBoxLayout(chips)
-            chip_layout.setContentsMargins(0, 0, 0, 0)
-            for name in [kind, *tag_names]:
-                chip = QLabel(name)
-                chip.setStyleSheet(
-                    "padding: 3px 8px; border-radius: 9px; background: palette(midlight)"
-                )
-                chip_layout.addWidget(chip)
-            chip_layout.addStretch(1)
-            tag_scroll = QScrollArea()
-            tag_scroll.setWidgetResizable(True)
-            tag_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            tag_scroll.setFixedHeight(31)
-            tag_scroll.setFrameShape(QFrame.NoFrame)
-            tag_scroll.setWidget(chips)
-            text_layout.addWidget(tag_scroll)
+            text_layout.addWidget(TagSummaryWidget(tag_entries))
             text_layout.addWidget(QLabel("★" * work.rating + pending))
             row_layout.addWidget(text_widget, 1)
             self.work_list.addItem(item)
@@ -670,6 +1186,21 @@ class MainWindow(QMainWindow):
             return
         self.show_work_detail(work_id)
 
+    def _work_selection_changed(self, current, previous) -> None:
+        if previous is not None:
+            previous_widget = self.work_list.itemWidget(previous)
+            if previous_widget is not None:
+                previous_widget.setStyleSheet(
+                    "QWidget#workRow { background: transparent; border: none; }"
+                )
+        if current is not None:
+            current_widget = self.work_list.itemWidget(current)
+            if current_widget is not None:
+                current_widget.setStyleSheet(
+                    "QWidget#workRow { background: transparent; "
+                    "border: 2px solid #6750a4; border-radius: 12px; }"
+                )
+
     def show_work_detail(self, work_id: int) -> None:
         """Run details and reader sequentially so no hidden modal blocks the main window."""
         while True:
@@ -677,16 +1208,52 @@ class MainWindow(QMainWindow):
             dialog = WorkDetailDialog(work_id, self.catalog, self.media, self)
             dialog.saved.connect(self.refresh_works)
             dialog.reading_requested.connect(requested.append)
+            dialog.kind_filter_requested.connect(self._filter_kind_from_detail)
+            dialog.tag_filter_requested.connect(self._filter_tag_from_detail)
             dialog.exec()
             if not requested:
                 return
             work = self.catalog.get_work(requested[0])
             if work is None:
                 return
-            ReaderDialog(work, ReaderService(self.catalog.database, self.media), self).exec()
+            self.hide()
+            try:
+                ReaderDialog(work, ReaderService(self.catalog.database, self.media), self).exec()
+            finally:
+                self.show()
+                self.raise_()
+                self.activateWindow()
+
+    def _filter_kind_from_detail(self, kind: str) -> None:
+        self._show_page(0)
+        self.search_edit.clear()
+        self.selected_kinds = {kind}
+        self.selected_tag_ids.clear()
+        target = self.comic_filter if kind == "comic" else self.illustration_filter
+        target.setChecked(True)
+        self.rating_filter.setCurrentIndex(0)
+        self.tag_search.clear()
+        self.all_tags.setChecked(True)
+        self.current_page = 1
+        self._refresh_filter_tags()
+        self.refresh_works()
+
+    def _filter_tag_from_detail(self, tag_id: int, kind: str) -> None:
+        self._show_page(0)
+        self.search_edit.clear()
+        self.selected_kinds = {kind}
+        self.selected_tag_ids = {tag_id}
+        target = self.comic_filter if kind == "comic" else self.illustration_filter
+        target.setChecked(True)
+        self.rating_filter.setCurrentIndex(0)
+        self.tag_search.clear()
+        self.all_tags.setChecked(True)
+        self.current_page = 1
+        self._refresh_filter_tags()
+        self.refresh_works()
 
     def open_tag_manager(self) -> None:
-        TagManagerDialog(self.catalog, self).exec()
+        open_tag_management(self.catalog, self)
         self._refresh_filter_tags()
         self.refresh_works()
 
@@ -696,10 +1263,42 @@ class MainWindow(QMainWindow):
             self.open_uploads([Path(path) for path in selected])
 
     def open_uploads(self, paths: list[Path]) -> None:
-        dialog = UploadDialog(paths, self.uploads, self.catalog, self)
-        dialog.committed.connect(self.controller.request_scan)
-        dialog.committed.connect(self.refresh_works)
-        dialog.exec()
+        try:
+            task = self.uploads.prepare(paths)
+        except (OSError, ValueError) as exc:
+            UploadResultDialog("无法加入作品库", str(exc), self).exec()
+            return
+        if task.invalid:
+            lines = [f"{item.source.name}：{item.error}" for item in task.invalid]
+            self.uploads.cancel(task)
+            UploadResultDialog(
+                "文件不合法",
+                "本次选择包含不能加入作品库的文件，因此整批均未加入。\n\n" + "\n".join(lines),
+                self,
+            ).exec()
+            return
+        if task.conflicts:
+            names = "\n".join(item.source.name for item in task.conflicts)
+            decision = UploadResultDialog(
+                "发现同名文件",
+                f"有 {len(task.conflicts)} 个文件与作品库重名：\n\n{names}\n\n"
+                "覆盖后将使用新文件的默认标题、空 Tag、未评价和默认封面，"
+                "旧阅读进度会被清除。",
+                self,
+                overwrite=True,
+            )
+            if decision.exec() != QDialog.Accepted:
+                self.uploads.cancel(task)
+                return
+        try:
+            self.uploads.commit(task, allow_overwrite=bool(task.conflicts))
+        except (OSError, ValueError) as exc:
+            if task.id in self.uploads.active_tasks:
+                self.uploads.cancel(task)
+            UploadResultDialog("加入失败", str(exc), self).exec()
+            return
+        self.controller.request_scan()
+        self.refresh_works()
 
     def dragEnterEvent(self, event) -> None:  # noqa: N802
         if event.mimeData().hasUrls() and any(url.isLocalFile() for url in event.mimeData().urls()):
@@ -712,7 +1311,7 @@ class MainWindow(QMainWindow):
             event.acceptProposedAction()
 
     def _scan_started(self) -> None:
-        self.scan_button.setEnabled(False)
+        self.refresh_button.setEnabled(False)
         self.scan_status.setText("正在扫描并校验作品…")
 
     def _scan_finished(self, result: ScanResult) -> None:
@@ -754,12 +1353,13 @@ class MainWindow(QMainWindow):
 
     def _scan_failed(self, message: str) -> None:
         self.scan_status.setText(f"扫描失败：{message}")
-        self.scan_button.setEnabled(True)
+        self.refresh_button.setEnabled(True)
 
     def bind_tray(self, tray: QSystemTrayIcon) -> None:
         self._tray = tray
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt API
+        self._save_window_geometry()
         if self._allow_close:
             event.accept()
             return
@@ -798,6 +1398,7 @@ class MainWindow(QMainWindow):
         self._finish_exit()
 
     def _finish_exit(self) -> None:
+        self._save_window_geometry()
         self._allow_close = True
         self.request_exit.emit()
 

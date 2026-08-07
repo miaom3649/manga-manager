@@ -3,17 +3,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.orm import selectinload
 
 from hlibrary.database import AppMeta, Database, Tag, TagGroup, Work, WorkTag
 from hlibrary.text import natural_key, normalize_text, search_terms
 
+AUTHOR_GROUP_NAME = "作者"
+AUTHOR_GROUP_NORMALIZED = normalize_text(AUTHOR_GROUP_NAME)
+
 
 @dataclass(frozen=True, slots=True)
 class CatalogQuery:
     text: str = ""
-    kinds: tuple[str, ...] = ()
+    # None means that the caller did not request a type filter. An explicitly
+    # empty tuple means that the user deselected both system type tags.
+    kinds: tuple[str, ...] | None = None
     tag_ids: tuple[int, ...] = ()
     tag_mode: str = "any"
     rating_mode: str = "any"
@@ -35,6 +40,24 @@ class CatalogPage:
 class CatalogService:
     def __init__(self, database: Database) -> None:
         self.database = database
+        with self.database.session() as session:
+            if not session.scalar(
+                select(TagGroup).where(TagGroup.normalized_name == AUTHOR_GROUP_NORMALIZED)
+            ):
+                session.add(
+                    TagGroup(
+                        name=AUTHOR_GROUP_NAME,
+                        normalized_name=AUTHOR_GROUP_NORMALIZED,
+                    )
+                )
+
+    @staticmethod
+    def is_author_group(group: TagGroup | None) -> bool:
+        return group is not None and group.normalized_name == AUTHOR_GROUP_NORMALIZED
+
+    @classmethod
+    def is_author_tag(cls, tag: Tag) -> bool:
+        return cls.is_author_group(tag.group)
 
     def setting(self, key: str, default: str) -> str:
         with self.database.session() as session:
@@ -65,7 +88,9 @@ class CatalogService:
                     ]
                 )
             )
-        if len(query.kinds) == 1:
+        if query.kinds == ():
+            conditions.append(Work.id.is_(None))
+        elif query.kinds is not None and len(query.kinds) == 1:
             conditions.append(Work.kind == query.kinds[0])
         if query.rating_mode == "exact":
             conditions.append(Work.rating == query.rating)
@@ -145,7 +170,13 @@ class CatalogService:
     def list_groups(self) -> list[TagGroup]:
         with self.database.session() as session:
             groups = list(session.scalars(select(TagGroup).options(selectinload(TagGroup.tags))))
-        return sorted(groups, key=lambda item: natural_key(item.name))
+        return sorted(
+            groups,
+            key=lambda item: (
+                0 if self.is_author_group(item) else 1,
+                natural_key(item.name),
+            ),
+        )
 
     def list_tags(self, search: str = "") -> list[Tag]:
         term = normalize_text(search)
@@ -162,23 +193,30 @@ class CatalogService:
                 if term in tag.normalized_name
                 or (tag.group is not None and term in tag.group.normalized_name)
             ]
-        return sorted(tags, key=lambda item: natural_key(self.tag_display_name(item, tags)))
+        return sorted(
+            tags,
+            key=lambda item: (
+                0 if self.is_author_tag(item) else 1,
+                natural_key(self.tag_display_name(item, tags)),
+            ),
+        )
 
     @staticmethod
     def tag_display_name(tag: Tag, all_tags: list[Tag]) -> str:
+        if tag.group and tag.group.normalized_name == AUTHOR_GROUP_NORMALIZED:
+            return tag.name
         duplicate = sum(item.normalized_name == tag.normalized_name for item in all_tags) > 1
         if not duplicate:
             return tag.name
         return f"{tag.group.name if tag.group else '未分组'}：{tag.name}"
 
     def create_group(self, name: str) -> TagGroup:
+        name = self._validate_tag_name(name, "分组")
         normalized = normalize_text(name)
-        if not normalized:
-            raise ValueError("分组名称不能为空")
         with self.database.session() as session:
             if session.scalar(select(TagGroup).where(TagGroup.normalized_name == normalized)):
                 raise ValueError("分组名称已存在")
-            group = TagGroup(name=name.strip(), normalized_name=normalized)
+            group = TagGroup(name=name, normalized_name=normalized)
             session.add(group)
             session.flush()
             group_id = group.id
@@ -186,12 +224,16 @@ class CatalogService:
             return session.get(TagGroup, group_id)  # type: ignore[return-value]
 
     def create_tag(self, name: str, group_id: int | None = None) -> Tag:
-        normalized = normalize_text(name)
-        if not normalized:
-            raise ValueError("Tag 名称不能为空")
         with self.database.session() as session:
-            if group_id is not None and session.get(TagGroup, group_id) is None:
+            group = session.get(TagGroup, group_id) if group_id is not None else None
+            if group_id is not None and group is None:
                 raise ValueError("分组不存在")
+            name = self._validate_tag_name(
+                name,
+                "Tag",
+                unlimited=self.is_author_group(group),
+            )
+            normalized = normalize_text(name)
             group_key = group_id or 0
             duplicate = session.scalar(
                 select(Tag).where(
@@ -202,7 +244,7 @@ class CatalogService:
             if duplicate:
                 raise ValueError("该分组中已有同名 Tag")
             tag = Tag(
-                name=name.strip(),
+                name=name,
                 normalized_name=normalized,
                 group_id=group_id,
                 group_key=group_key,
@@ -227,13 +269,14 @@ class CatalogService:
         return count
 
     def rename_group(self, group_id: int, name: str) -> None:
-        normalized = normalize_text(name)
-        if not normalized:
-            raise ValueError("分组名称不能为空")
         with self.database.session() as session:
             group = session.get(TagGroup, group_id)
             if group is None:
                 raise ValueError("分组不存在")
+            if self.is_author_group(group):
+                raise ValueError("系统分组“作者”不能改名")
+            name = self._validate_tag_name(name, "分组")
+            normalized = normalize_text(name)
             duplicate = session.scalar(
                 select(TagGroup).where(
                     TagGroup.normalized_name == normalized,
@@ -242,17 +285,20 @@ class CatalogService:
             )
             if duplicate:
                 raise ValueError("分组名称已存在")
-            group.name = name.strip()
+            group.name = name
             group.normalized_name = normalized
 
     def rename_tag(self, tag_id: int, name: str) -> None:
-        normalized = normalize_text(name)
-        if not normalized:
-            raise ValueError("Tag 名称不能为空")
         with self.database.session() as session:
             tag = session.get(Tag, tag_id)
             if tag is None:
                 raise ValueError("Tag 不存在")
+            name = self._validate_tag_name(
+                name,
+                "Tag",
+                unlimited=self.is_author_tag(tag),
+            )
+            normalized = normalize_text(name)
             duplicate = session.scalar(
                 select(Tag).where(
                     Tag.group_key == tag.group_key,
@@ -262,16 +308,28 @@ class CatalogService:
             )
             if duplicate:
                 raise ValueError("该分组中已有同名 Tag")
-            tag.name = name.strip()
+            tag.name = name
             tag.normalized_name = normalized
+
+    @staticmethod
+    def _validate_tag_name(name: str, kind: str, *, unlimited: bool = False) -> str:
+        value = name.strip()
+        if not value:
+            raise ValueError(f"{kind} 名称不能为空")
+        if not unlimited and len(value) > 5:
+            raise ValueError(f"{kind} 名称最多 5 个字符")
+        return value
 
     def move_tag(self, tag_id: int, group_id: int | None) -> None:
         with self.database.session() as session:
             tag = session.get(Tag, tag_id)
             if tag is None:
                 raise ValueError("Tag 不存在")
-            if group_id is not None and session.get(TagGroup, group_id) is None:
+            group = session.get(TagGroup, group_id) if group_id is not None else None
+            if group_id is not None and group is None:
                 raise ValueError("分组不存在")
+            if not self.is_author_group(group) and len(tag.name) > 5:
+                raise ValueError("作者 Tag 超过 5 个字符，不能移出作者分组")
             group_key = group_id or 0
             duplicate = session.scalar(
                 select(Tag).where(
@@ -312,6 +370,8 @@ class CatalogService:
             group = session.get(TagGroup, group_id)
             if group is None:
                 raise ValueError("分组不存在")
+            if self.is_author_group(group):
+                raise ValueError("系统分组“作者”不能删除")
             tags = list(session.scalars(select(Tag).where(Tag.group_id == group_id)))
             if delete_tags:
                 for tag in tags:
@@ -331,3 +391,15 @@ class CatalogService:
                     tag.group_key = 0
             session.delete(group)
         return impact
+
+    def reset_custom_metadata(self) -> None:
+        """Remove user Tags/groups and titles without touching media files."""
+        with self.database.session() as session:
+            session.execute(delete(WorkTag))
+            session.execute(delete(Tag))
+            session.execute(
+                delete(TagGroup).where(
+                    TagGroup.normalized_name != AUTHOR_GROUP_NORMALIZED
+                )
+            )
+            session.execute(update(Work).values(title=None, normalized_title=""))

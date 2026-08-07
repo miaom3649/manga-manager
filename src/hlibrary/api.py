@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, File, Header, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -12,7 +12,6 @@ from hlibrary.catalog import CatalogQuery, CatalogService
 from hlibrary.library import LibraryService
 from hlibrary.media import MediaService
 from hlibrary.pairing import PairingService
-from hlibrary.upload import UploadService, UploadTask
 
 
 class PairRequest(BaseModel):
@@ -34,19 +33,6 @@ class ProgressUpdate(BaseModel):
     fingerprint: str = Field(max_length=64)
 
 
-class UploadMetadata(BaseModel):
-    title: str = Field(default="", max_length=1000)
-    rating: int = Field(default=0, ge=0, le=3)
-    tag_ids: list[int] = Field(default_factory=list)
-    cover_member: str | None = Field(default=None, max_length=1024)
-    removed: bool = False
-
-
-class UploadCommit(BaseModel):
-    allow_overwrite: bool = False
-    items: list[UploadMetadata]
-
-
 class TagCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     group_id: int | None = None
@@ -66,10 +52,8 @@ def create_api(
     catalog: CatalogService | None = None,
     media: MediaService | None = None,
     pairing: PairingService | None = None,
-    uploads: UploadService | None = None,
 ) -> FastAPI:
     app = FastAPI(title="H库局域网服务", version=__version__)
-    upload_tasks: dict[str, UploadTask] = {}
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
@@ -143,7 +127,7 @@ def create_api(
         page: int = Query(1, ge=1),
         sort: str = "added",
         descending: bool = True,
-        kinds: str = "",
+        kinds: str | None = None,
         tag_ids: str = "",
         tag_mode: str = "any",
         rating_mode: str = "any",
@@ -161,7 +145,11 @@ def create_api(
                     page=page,
                     sort_by=sort,
                     descending=descending,
-                    kinds=tuple(value for value in kinds.split(",") if value),
+                    kinds=(
+                        tuple(value for value in kinds.split(",") if value)
+                        if kinds is not None
+                        else None
+                    ),
                     tag_ids=tuple(int(value) for value in tag_ids.split(",") if value.isdigit()),
                     tag_mode=tag_mode,
                     rating_mode=rating_mode,
@@ -182,7 +170,12 @@ def create_api(
                     "rating": item.rating,
                     "status": item.status,
                     "tags": [
-                        {"id": tag.id, "name": catalog.tag_display_name(tag, all_tags)}
+                        {
+                            "id": tag.id,
+                            "name": catalog.tag_display_name(tag, all_tags),
+                            "groupId": tag.group_id,
+                            "groupName": tag.group.name if tag.group else None,
+                        }
                         for tag in item.tags
                     ]
                     if catalog
@@ -227,7 +220,13 @@ def create_api(
             "fingerprint": work.fingerprint,
             "coverMember": work.cover_member,
             "tags": [
-                {"id": tag.id, "name": catalog.tag_display_name(tag, all_tags)} for tag in work.tags
+                {
+                    "id": tag.id,
+                    "name": catalog.tag_display_name(tag, all_tags),
+                    "groupId": tag.group_id,
+                    "groupName": tag.group.name if tag.group else None,
+                }
+                for tag in work.tags
             ],
             "previews": media.preview_members(work) if media and work.kind == "comic" else [],
         }
@@ -305,6 +304,7 @@ def create_api(
                     "tags": len(group.tags),
                     "comics": comics,
                     "illustrations": illustrations,
+                    "system": catalog.is_author_group(group),
                 }
             )
         return results
@@ -470,139 +470,6 @@ def create_api(
         else:
             page_offset = payload.page_offset
         ReaderService(catalog.database, media).save_progress(work, page_index, page_offset)
-        return {"status": "ok"}
-
-    @app.post("/api/uploads")
-    async def prepare_upload(
-        files: list[UploadFile] = File(...),  # noqa: B008 - FastAPI dependency
-        authorization: str | None = Header(None),
-    ) -> dict[str, object]:
-        authorize(authorization)
-        if uploads is None:
-            raise HTTPException(503, "上传服务尚未启用")
-        import tempfile
-
-        source_directory = Path(tempfile.mkdtemp(prefix="hlibrary-mobile-upload-"))
-        sources = []
-        try:
-            for index, upload in enumerate(files):
-                safe_name = Path(upload.filename or f"upload-{index}").name
-                item_directory = source_directory / f"{index:04d}"
-                item_directory.mkdir()
-                target = item_directory / safe_name
-                with target.open("wb") as output:
-                    while chunk := await upload.read(1024 * 1024):
-                        output.write(chunk)
-                sources.append(target)
-            task = uploads.prepare(sources)
-        finally:
-            import shutil
-
-            shutil.rmtree(source_directory, ignore_errors=True)
-        upload_tasks[task.id] = task
-        return {
-            "taskId": task.id,
-            "items": [
-                {
-                    "name": item.source.name,
-                    "kind": item.kind,
-                    "valid": item.valid,
-                    "error": item.error,
-                    "conflict": item.conflict,
-                    "title": item.title,
-                    "rating": item.rating,
-                    "coverMember": item.cover_member,
-                }
-                for item in task.items
-            ],
-        }
-
-    @app.post("/api/uploads/{task_id}/commit")
-    def commit_upload(
-        task_id: str,
-        payload: UploadCommit,
-        authorization: str | None = Header(None),
-    ) -> dict[str, object]:
-        authorize(authorization)
-        if uploads is None or (task := upload_tasks.get(task_id)) is None:
-            raise HTTPException(404, "上传任务不存在或已结束")
-        if len(payload.items) != len(task.items):
-            raise HTTPException(422, "上传资料数量不一致")
-        kept = []
-        for item, metadata in zip(task.items, payload.items, strict=True):
-            if metadata.removed:
-                item.staged.unlink(missing_ok=True)
-                continue
-            item.title = metadata.title
-            item.rating = metadata.rating
-            item.tag_ids = set(metadata.tag_ids)
-            item.cover_member = metadata.cover_member or item.cover_member
-            kept.append(item)
-        task.items = kept
-        if not task.items:
-            raise HTTPException(422, "上传任务中没有文件")
-        try:
-            work_ids = uploads.commit(task, payload.allow_overwrite)
-        except (ValueError, FileExistsError) as exc:
-            raise HTTPException(409, str(exc)) from exc
-        finally:
-            upload_tasks.pop(task_id, None)
-        return {"status": "ok", "workIds": work_ids}
-
-    def upload_members(task_id: str, item_index: int) -> tuple[UploadTask, list[str]]:
-        import zipfile
-
-        from hlibrary.media import IMAGE_SUFFIXES
-        from hlibrary.text import natural_key
-
-        task = upload_tasks.get(task_id)
-        if task is None or item_index < 0 or item_index >= len(task.items):
-            raise HTTPException(404, "上传项不存在")
-        item = task.items[item_index]
-        if item.kind != "comic":
-            raise HTTPException(422, "只有漫画可以选择压缩包内封面")
-        with zipfile.ZipFile(item.staged) as archive:
-            members = sorted(
-                [
-                    info.filename
-                    for info in archive.infolist()
-                    if not info.is_dir() and Path(info.filename).suffix.casefold() in IMAGE_SUFFIXES
-                ],
-                key=natural_key,
-            )
-        return task, members
-
-    @app.get("/api/uploads/{task_id}/items/{item_index}/pages")
-    def upload_pages(
-        task_id: str, item_index: int, authorization: str | None = Header(None)
-    ) -> dict[str, object]:
-        authorize(authorization)
-        _task, members = upload_members(task_id, item_index)
-        return {"items": members}
-
-    @app.get("/api/uploads/{task_id}/items/{item_index}/pages/{page_index}")
-    def upload_page_image(
-        task_id: str,
-        item_index: int,
-        page_index: int,
-        authorization: str | None = Header(None),
-    ):
-        authorize(authorization)
-        import zipfile
-
-        from fastapi.responses import Response
-
-        task, members = upload_members(task_id, item_index)
-        if page_index < 0 or page_index >= len(members):
-            raise HTTPException(404, "上传图片不存在")
-        with zipfile.ZipFile(task.items[item_index].staged) as archive:
-            return Response(archive.read(members[page_index]), media_type="image/webp")
-
-    @app.delete("/api/uploads/{task_id}")
-    def cancel_upload(task_id: str, authorization: str | None = Header(None)) -> dict[str, str]:
-        authorize(authorization)
-        if uploads and (task := upload_tasks.pop(task_id, None)):
-            uploads.cancel(task)
         return {"status": "ok"}
 
     @app.get("/api/notifications")

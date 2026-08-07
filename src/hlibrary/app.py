@@ -16,6 +16,7 @@ from hlibrary.config import APP_ID, APP_NAME, Settings
 from hlibrary.controller import LibraryController
 from hlibrary.database import Database
 from hlibrary.desktop.main_window import MainWindow, create_tray
+from hlibrary.desktop.windowing import install_dialog_centering
 from hlibrary.library import LibraryService
 from hlibrary.media import MediaService
 from hlibrary.migration import MigrationService
@@ -53,7 +54,6 @@ def run() -> int:
         catalog,
         media,
         pairing,
-        uploads,
     )
     server.start()
 
@@ -62,6 +62,7 @@ def run() -> int:
     app.setApplicationDisplayName(APP_NAME)
     app.setOrganizationName(APP_ID)
     app.setQuitOnLastWindowClosed(False)
+    dialog_centering = install_dialog_centering(app)
     apply_theme(app, appearance.theme())
 
     window = MainWindow(
@@ -76,8 +77,10 @@ def run() -> int:
         cache,
         notifications,
         appearance,
+        server,
     )
     tray = create_tray(app, window)
+    app._dialog_centering = dialog_centering  # type: ignore[attr-defined]
 
     def shutdown() -> None:
         controller.stop()

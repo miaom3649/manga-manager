@@ -59,3 +59,16 @@ def test_daily_backup_once_and_retention(tmp_path) -> None:
         backups.create("自动")
     assert len(list((tmp_path / "library" / "备份").glob("H库-自动-*.sqlite"))) == 5
     assert manual.exists()
+
+
+def test_delete_all_backups_removes_manual_and_automatic(tmp_path) -> None:
+    database = Database(tmp_path / "main.db")
+    database.initialize("test")
+    library = LibraryService(database)
+    library.configure_root(tmp_path / "library")
+    backups = BackupService(database, library)
+    backups.create("手动")
+    backups.create("自动")
+
+    assert backups.delete_all() == 2
+    assert backups.list_backups() == []

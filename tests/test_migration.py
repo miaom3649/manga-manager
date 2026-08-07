@@ -55,3 +55,32 @@ def test_migration_conflict_causes_zero_changes(tmp_path) -> None:
     assert (old / "123.zip").is_file()
     assert (target / "123.zip").read_bytes() == b"conflict"
     assert library.library_root() == old.resolve()
+
+
+def test_migrate_into_child_directory_keeps_outer_directory(tmp_path) -> None:
+    database = Database(tmp_path / "main.db")
+    database.initialize("test")
+    library = LibraryService(database)
+    old = library.configure_root(tmp_path / "old")
+    comic(old / "123.zip")
+    library.scan()
+    target = old / "新目录"
+
+    result = MigrationService(database, library).migrate(target)
+
+    assert result.files == 1
+    assert not result.old_root_removed
+    assert not (old / "123.zip").exists()
+    assert (target / "123.zip").is_file()
+    assert old.is_dir()
+    assert library.library_root() == target.resolve()
+
+
+def test_migration_still_rejects_current_directory(tmp_path) -> None:
+    database = Database(tmp_path / "main.db")
+    database.initialize("test")
+    library = LibraryService(database)
+    old = library.configure_root(tmp_path / "old")
+
+    with pytest.raises(ValueError, match="不能与当前目录相同"):
+        MigrationService(database, library).preview(old)
