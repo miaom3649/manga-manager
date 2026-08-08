@@ -23,17 +23,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from hlibrary.catalog import CatalogService
-from hlibrary.database import Tag, Work
-from hlibrary.desktop.reader_dialog import pixmap_from_bytes
-from hlibrary.desktop.tag_widgets import (
+from hmanga.catalog import CatalogService
+from hmanga.database import Tag, Work
+from hmanga.desktop.reader_dialog import pixmap_from_bytes
+from hmanga.desktop.tag_widgets import (
     AUTHOR_TAG_COLOR,
     is_long_tag_category,
     tag_chip_text,
     tag_sort_category,
 )
-from hlibrary.desktop.windowing import FloatingCardDialog, ScreenCenteredDialog
-from hlibrary.media import MediaService
+from hmanga.desktop.windowing import FloatingCardDialog, ScreenCenteredDialog
+from hmanga.media import MediaService
 
 
 def _clear_layout(layout) -> None:

@@ -7,23 +7,23 @@ from pathlib import Path
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
-from hlibrary import __version__
-from hlibrary.appearance import AppearanceService, apply_theme
-from hlibrary.backup import BackupService
-from hlibrary.cache import CacheService
-from hlibrary.catalog import CatalogService
-from hlibrary.config import APP_ID, APP_NAME, Settings
-from hlibrary.controller import LibraryController
-from hlibrary.database import Database
-from hlibrary.desktop.main_window import MainWindow, create_tray
-from hlibrary.desktop.windowing import install_dialog_centering
-from hlibrary.library import LibraryService
-from hlibrary.media import MediaService
-from hlibrary.migration import MigrationService
-from hlibrary.notifications import NotificationService
-from hlibrary.pairing import PairingService
-from hlibrary.server import ApiServer
-from hlibrary.upload import UploadService
+from hmanga import __version__
+from hmanga.appearance import AppearanceService, apply_theme
+from hmanga.backup import BackupService
+from hmanga.cache import CacheService
+from hmanga.catalog import CatalogService
+from hmanga.config import APP_ID, APP_NAME, Settings
+from hmanga.controller import LibraryController
+from hmanga.database import Database
+from hmanga.desktop.main_window import MainWindow, create_tray
+from hmanga.desktop.windowing import install_dialog_centering
+from hmanga.library import LibraryService
+from hmanga.media import MediaService
+from hmanga.migration import MigrationService
+from hmanga.notifications import NotificationService
+from hmanga.pairing import PairingService
+from hmanga.server import ApiServer
+from hmanga.upload import UploadService
 
 
 def run() -> int:
@@ -45,7 +45,7 @@ def run() -> int:
     appearance = AppearanceService(database)
     controller = LibraryController(library)
 
-    web_root = Path(str(files("hlibrary").joinpath("web")))
+    web_root = Path(str(files("hmanga").joinpath("web")))
     server = ApiServer(
         settings.api_host,
         settings.api_port,

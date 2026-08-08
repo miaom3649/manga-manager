@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 
-from hlibrary.server import ApiServer
+from hmanga.server import ApiServer
 
 
 def test_server_can_be_created_without_console(monkeypatch) -> None:

@@ -3,7 +3,7 @@ import os
 import sys
 from ctypes.util import find_library
 
-from hlibrary import __version__
+from hmanga import __version__
 
 
 def configure_linux_window_positioning() -> None:
@@ -19,7 +19,7 @@ def configure_linux_window_positioning() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="HLibrary", description=f"H库 {__version__}")
+    parser = argparse.ArgumentParser(prog="hmanga", description=f"HManガ {__version__}")
     parser.add_argument("--version", action="store_true", help="检查程序是否可以正常启动")
     args = parser.parse_args(argv)
     if args.version:
@@ -27,7 +27,7 @@ def main(argv: list[str] | None = None) -> int:
 
     configure_linux_window_positioning()
     # 延迟导入 Qt，让 Windows 构建流水线可以无窗口启动成品做冒烟检查。
-    from hlibrary.app import run
+    from hmanga.app import run
 
     return run()
 

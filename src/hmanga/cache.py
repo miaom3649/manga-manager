@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from hlibrary.database import AppMeta, Database
+from hmanga.database import AppMeta, Database
 
 CACHE_LIMIT_KEY = "cache_limit_bytes"
 DEFAULT_CACHE_LIMIT = 1024**3

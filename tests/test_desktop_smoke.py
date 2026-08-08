@@ -13,22 +13,22 @@ from PySide6.QtCore import QPoint, QSize, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from hlibrary.appearance import AppearanceService
-from hlibrary.backup import BackupService
-from hlibrary.cache import CacheService
-from hlibrary.catalog import CatalogQuery, CatalogService
-from hlibrary.controller import LibraryController
-from hlibrary.database import Database
-from hlibrary.desktop.main_window import MainWindow, TagSummaryWidget
-from hlibrary.desktop.reader_dialog import ReaderDialog
-from hlibrary.desktop.tag_widgets import AUTHOR_TAG_COLOR
-from hlibrary.desktop.windowing import FloatingCardDialog, ScreenCenteredDialog
-from hlibrary.library import LibraryService
-from hlibrary.media import MediaService
-from hlibrary.migration import MigrationService
-from hlibrary.notifications import NotificationService
-from hlibrary.pairing import PairingService
-from hlibrary.upload import UploadService
+from hmanga.appearance import AppearanceService
+from hmanga.backup import BackupService
+from hmanga.cache import CacheService
+from hmanga.catalog import CatalogQuery, CatalogService
+from hmanga.controller import LibraryController
+from hmanga.database import Database
+from hmanga.desktop.main_window import MainWindow, TagSummaryWidget
+from hmanga.desktop.reader_dialog import ReaderDialog
+from hmanga.desktop.tag_widgets import AUTHOR_TAG_COLOR
+from hmanga.desktop.windowing import FloatingCardDialog, ScreenCenteredDialog
+from hmanga.library import LibraryService
+from hmanga.media import MediaService
+from hmanga.migration import MigrationService
+from hmanga.notifications import NotificationService
+from hmanga.pairing import PairingService
+from hmanga.upload import UploadService
 
 
 class FakeReader:
@@ -129,9 +129,9 @@ def test_full_desktop_window_constructs(tmp_path) -> None:
     )
     window.illustration_filter.click()
     app.processEvents()
-    assert window.windowTitle().startswith("H库")
+    assert window.windowTitle().startswith("HManガ")
     assert window.pages.count() == 3
-    assert window.brand_button.text() == "H库"
+    assert window.brand_button.text() == "HManガ"
     assert window.notification_button.size() == QSize(44, 44)
     assert window.settings_button.size() == QSize(44, 44)
     assert window.work_list.count() == 1

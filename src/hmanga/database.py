@@ -260,7 +260,7 @@ class Database:
             )
 
     def _backfill_search_columns(self) -> None:
-        from hlibrary.text import normalize_text
+        from hmanga.text import normalize_text
 
         with self.session() as session:
             for work in session.scalars(select(Work)):

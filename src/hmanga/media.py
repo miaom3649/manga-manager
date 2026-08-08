@@ -7,9 +7,9 @@ from pathlib import Path
 
 from PIL import Image, ImageOps, ImageSequence
 
-from hlibrary.database import Work
-from hlibrary.library import LibraryService
-from hlibrary.text import natural_key
+from hmanga.database import Work
+from hmanga.library import LibraryService
+from hmanga.text import natural_key
 
 IMAGE_SUFFIXES = {
     ".avif",

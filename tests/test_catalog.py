@@ -4,9 +4,9 @@ from datetime import UTC, datetime
 
 import pytest
 
-from hlibrary.catalog import CatalogQuery, CatalogService
-from hlibrary.database import Database, Work
-from hlibrary.text import normalize_text
+from hmanga.catalog import CatalogQuery, CatalogService
+from hmanga.database import Database, Work
+from hmanga.text import normalize_text
 
 
 @pytest.fixture

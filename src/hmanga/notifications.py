@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, func, select, update
 
-from hlibrary.database import Database, Notification
+from hmanga.database import Database, Notification
 
 
 class NotificationService:

@@ -10,14 +10,14 @@ from pathlib import Path
 
 from sqlalchemy import delete, select
 
-from hlibrary.database import Database, ReadingProgress, Tag, Work
-from hlibrary.library import (
+from hmanga.database import Database, ReadingProgress, Tag, Work
+from hmanga.library import (
     LibraryService,
     file_fingerprint,
     inspect_comic,
     inspect_illustration,
 )
-from hlibrary.text import normalize_text
+from hmanga.text import normalize_text
 
 
 @dataclass(slots=True)
@@ -147,7 +147,7 @@ class UploadService:
                         backup = backup_dir / f"{index:04d}-{target.name}"
                         os.replace(target, backup)
                         backups.append((backup, target))
-                    incoming = target.with_name(target.name + ".hlibrary-new")
+                    incoming = target.with_name(target.name + ".hmanga-new")
                     shutil.copy2(item.staged, incoming)
                     os.replace(incoming, target)
                     installed.append(target)

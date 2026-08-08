@@ -1,6 +1,6 @@
-# H库
+# HManガ
 
-H库是一个运行在 Windows 上的本地漫画与插画管理软件。Windows 主程序保存和管理作品，已配对手机可在同一 Wi-Fi 下通过浏览器搜索、分类和阅读。
+HManガ是一个运行在 Windows 上的本地漫画与插画管理软件。Windows 主程序保存和管理作品，已配对手机可在同一 Wi-Fi 下通过浏览器搜索、分类和阅读。
 
 ## 项目文档
 
@@ -11,7 +11,7 @@ H库是一个运行在 Windows 上的本地漫画与插画管理软件。Windows
 
 ## 当前状态
 
-H库 已实现 Windows 本地管理与同一 Wi-Fi 手机浏览器访问的完整主流程：
+HManガ 已实现 Windows 本地管理与同一 Wi-Fi 手机浏览器访问的完整主流程：
 
 - PySide6 Windows/Ubuntu 桌面窗口与系统托盘。
 - FastAPI 局域网鉴权、媒体、上传与实时通知接口。
@@ -33,7 +33,7 @@ H库 已实现 Windows 本地管理与同一 Wi-Fi 手机浏览器访问的完�
 python3 -m venv .venv
 .venv/bin/python -m pip install -e '.[dev]'
 .venv/bin/python -m pytest
-.venv/bin/hlibrary
+.venv/bin/hmanga
 ```
 
 前端需要 Node.js 22：

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from hlibrary.database import Database, Notification
-from hlibrary.notifications import NotificationService
+from hmanga.database import Database, Notification
+from hmanga.notifications import NotificationService
 
 
 def test_notification_read_delete_and_retention(tmp_path) -> None:

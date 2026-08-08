@@ -11,13 +11,13 @@ Pop-Location
 
 python -m pytest
 python -m ruff check src tests migrations
-python -m PyInstaller --noconfirm packaging/HLibrary.spec
+python -m PyInstaller --noconfirm packaging/HManga.spec
 
-$Smoke = Start-Process -FilePath "dist\HLibrary\HLibrary.exe" -ArgumentList "--version" -Wait -PassThru
+$Smoke = Start-Process -FilePath "dist\HManga\HManga.exe" -ArgumentList "--version" -Wait -PassThru
 if ($Smoke.ExitCode -ne 0) {
     throw "Packaged application smoke test failed with exit code $($Smoke.ExitCode)"
 }
-$DebugSmoke = Start-Process -FilePath "dist\HLibrary\HLibrary-Debug.exe" -ArgumentList "--version" -Wait -PassThru
+$DebugSmoke = Start-Process -FilePath "dist\HManga\HManga-Debug.exe" -ArgumentList "--version" -Wait -PassThru
 if ($DebugSmoke.ExitCode -ne 0) {
     throw "Debug application smoke test failed with exit code $($DebugSmoke.ExitCode)"
 }
@@ -35,4 +35,4 @@ if (-not (Test-Path $LanguageFile)) {
 if ((Get-Item $LanguageFile).Length -lt 10000) {
     throw "Downloaded Inno Setup language file is incomplete"
 }
-& $Iscc packaging/HLibrary.iss
+& $Iscc packaging/HManga.iss

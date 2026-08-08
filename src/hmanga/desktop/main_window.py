@@ -40,35 +40,35 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from hlibrary import __version__
-from hlibrary.appearance import AppearanceService, apply_theme
-from hlibrary.backup import BackupService
-from hlibrary.cache import CacheService
-from hlibrary.catalog import CatalogQuery, CatalogService
-from hlibrary.config import APP_NAME
-from hlibrary.controller import LibraryController
-from hlibrary.desktop.dialogs import (
+from hmanga import __version__
+from hmanga.appearance import AppearanceService, apply_theme
+from hmanga.backup import BackupService
+from hmanga.cache import CacheService
+from hmanga.catalog import CatalogQuery, CatalogService
+from hmanga.config import APP_NAME
+from hmanga.controller import LibraryController
+from hmanga.desktop.dialogs import (
     ResetSettingsDialog,
     UploadResultDialog,
     WorkDetailDialog,
     open_tag_management,
 )
-from hlibrary.desktop.pairing_dialog import PairingDialog
-from hlibrary.desktop.reader_dialog import ReaderDialog
-from hlibrary.desktop.tag_widgets import (
+from hmanga.desktop.pairing_dialog import PairingDialog
+from hmanga.desktop.reader_dialog import ReaderDialog
+from hmanga.desktop.tag_widgets import (
     AUTHOR_TAG_COLOR,
     TAG_PREFIX_COLOR,
     is_long_tag_category,
     tag_chip_text,
     tag_sort_category,
 )
-from hlibrary.library import LibraryService, ScanResult
-from hlibrary.media import MediaService
-from hlibrary.migration import MigrationService
-from hlibrary.notifications import NotificationService
-from hlibrary.pairing import PairingService
-from hlibrary.reader import ReaderService
-from hlibrary.upload import UploadService
+from hmanga.library import LibraryService, ScanResult
+from hmanga.media import MediaService
+from hmanga.migration import MigrationService
+from hmanga.notifications import NotificationService
+from hmanga.pairing import PairingService
+from hmanga.reader import ReaderService
+from hmanga.upload import UploadService
 
 
 class TagSummaryWidget(QWidget):
@@ -380,7 +380,7 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout(bar)
         row.setContentsMargins(16, 10, 16, 10)
         row.setSpacing(10)
-        self.brand_button = QPushButton("H库")
+        self.brand_button = QPushButton(APP_NAME)
         self.brand_button.setObjectName("brandButton")
         self.brand_button.setIcon(self.style().standardIcon(QStyle.SP_DirHomeIcon))
         self.brand_button.setIconSize(QSize(30, 30))
@@ -856,7 +856,7 @@ class MainWindow(QMainWindow):
         current = self.library.library_root()
         selected = QFileDialog.getExistingDirectory(
             self,
-            "选择 H库 漫画主目录",
+            f"选择 {APP_NAME} 漫画主目录",
             str(current or ""),
         )
         if selected:
@@ -869,7 +869,7 @@ class MainWindow(QMainWindow):
     def migrate_root(self) -> None:
         current = self.library.library_root()
         selected = QFileDialog.getExistingDirectory(
-            self, "选择新的 H库 主目录", str(current.parent if current else "")
+            self, f"选择新的 {APP_NAME} 主目录", str(current.parent if current else "")
         )
         if not selected:
             return
@@ -938,9 +938,9 @@ class MainWindow(QMainWindow):
     def restore_backup(self) -> None:
         selected, _ = QFileDialog.getOpenFileName(
             self,
-            "选择 H库 备份",
+            f"选择 {APP_NAME} 备份",
             str(self.backups.backup_directory()),
-            "H库备份 (*.sqlite)",
+            f"{APP_NAME} 备份 (*.sqlite)",
         )
         if not selected:
             return
@@ -1157,7 +1157,7 @@ class MainWindow(QMainWindow):
             self.work_list.addItem(item)
             self.work_list.setItemWidget(item, row_widget)
         if not page.items:
-            self.work_list.addItem("尚无作品。选择目录后，H库 会扫描有效 ZIP 和插画。")
+            self.work_list.addItem(f"尚无作品。选择目录后，{APP_NAME} 会扫描有效 ZIP 和插画。")
         self.page_label.setText(f"共 {page.total} 部 · 第 {page.page} / {page.pages} 页")
         self.page_jump.setMaximum(page.pages)
         self.page_jump.setValue(page.page)
@@ -1375,7 +1375,9 @@ class MainWindow(QMainWindow):
         event.ignore()
         self.hide()
         if hasattr(self, "_tray"):
-            self._tray.showMessage(APP_NAME, "H库 已缩小到系统托盘，手机连接服务继续运行。")
+            self._tray.showMessage(
+                APP_NAME, f"{APP_NAME} 已缩小到系统托盘，手机连接服务继续运行。"
+            )
 
     def exit_application(self) -> None:
         if self.uploads.active_count():
@@ -1424,7 +1426,7 @@ def create_tray(app: QApplication, window: MainWindow) -> QSystemTrayIcon:
 
         menu = QMenu()
         tray.setContextMenu(menu)
-    show_action = QAction("打开 H库", tray)
+    show_action = QAction(f"打开 {APP_NAME}", tray)
     exit_action = QAction("退出", tray)
     show_action.triggered.connect(window.showNormal)
     show_action.triggered.connect(window.activateWindow)

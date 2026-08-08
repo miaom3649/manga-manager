@@ -1,7 +1,7 @@
 import os
 
-from hlibrary import __version__
-from hlibrary.__main__ import configure_linux_window_positioning, main
+from hmanga import __version__
+from hmanga.__main__ import configure_linux_window_positioning, main
 
 
 def test_version_smoke_path_does_not_start_gui() -> None:
@@ -14,7 +14,7 @@ def test_wayland_development_run_uses_xwayland_for_window_positioning(monkeypatc
     monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
     monkeypatch.setenv("DISPLAY", ":0")
     monkeypatch.delenv("QT_QPA_PLATFORM", raising=False)
-    monkeypatch.setattr("hlibrary.__main__.find_library", lambda name: "libxcb-cursor.so.0")
+    monkeypatch.setattr("hmanga.__main__.find_library", lambda name: "libxcb-cursor.so.0")
 
     configure_linux_window_positioning()
 
@@ -26,7 +26,7 @@ def test_wayland_keeps_working_when_xcb_cursor_is_missing(monkeypatch) -> None:
     monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
     monkeypatch.setenv("DISPLAY", ":0")
     monkeypatch.delenv("QT_QPA_PLATFORM", raising=False)
-    monkeypatch.setattr("hlibrary.__main__.find_library", lambda name: None)
+    monkeypatch.setattr("hmanga.__main__.find_library", lambda name: None)
 
     configure_linux_window_positioning()
 

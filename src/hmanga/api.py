@@ -7,16 +7,15 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from hlibrary import __version__
-from hlibrary.catalog import CatalogQuery, CatalogService
-from hlibrary.library import LibraryService
-from hlibrary.media import MediaService
-from hlibrary.pairing import PairingService
+from hmanga import __version__
+from hmanga.catalog import CatalogQuery, CatalogService
+from hmanga.library import LibraryService
+from hmanga.media import MediaService
+from hmanga.pairing import PairingService
 
 
 class PairRequest(BaseModel):
     code: str = Field(min_length=6, max_length=6)
-    nonce: str = Field(min_length=16, max_length=200)
     name: str = Field(default="我的设备", max_length=200)
 
 
@@ -53,11 +52,11 @@ def create_api(
     media: MediaService | None = None,
     pairing: PairingService | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="H库局域网服务", version=__version__)
+    app = FastAPI(title="HManガ局域网服务", version=__version__)
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
-        return {"status": "ok", "name": "H库", "version": __version__}
+        return {"status": "ok", "name": "HManガ", "version": __version__}
 
     @app.get("/api/version")
     def version() -> dict[str, str]:
@@ -82,7 +81,6 @@ def create_api(
         try:
             token = pairing.pair(
                 payload.code,
-                payload.nonce,
                 payload.name,
                 request.headers.get("user-agent", ""),
                 request.client.host if request.client else "unknown",
@@ -139,17 +137,16 @@ def create_api(
             items = library.list_works() if library else []
             total, current_page, pages = len(items), 1, 1
         else:
+            requested_kinds = tuple(
+                value for value in (kinds or "").split(",") if value
+            ) or ("comic",)
             result = catalog.query(
                 CatalogQuery(
                     text=text,
                     page=page,
                     sort_by=sort,
                     descending=descending,
-                    kinds=(
-                        tuple(value for value in kinds.split(",") if value)
-                        if kinds is not None
-                        else None
-                    ),
+                    kinds=requested_kinds,
                     tag_ids=tuple(int(value) for value in tag_ids.split(",") if value.isdigit()),
                     tag_mode=tag_mode,
                     rating_mode=rating_mode,
@@ -435,7 +432,7 @@ def create_api(
         work = catalog.get_work(work_id)
         if work is None:
             raise HTTPException(404, "作品不存在")
-        from hlibrary.reader import ReaderService
+        from hmanga.reader import ReaderService
 
         value = ReaderService(catalog.database, media).progress(work)
         return {
@@ -459,7 +456,7 @@ def create_api(
             raise HTTPException(404, "作品不存在")
         if payload.fingerprint != (work.fingerprint or ""):
             raise HTTPException(409, "作品内容已被替换，旧阅读进度不能同步")
-        from hlibrary.reader import ReaderService
+        from hmanga.reader import ReaderService
 
         current = ReaderService(catalog.database, media).progress(work)
         page_index = max(payload.page_index, current.page_index if current else 0)
@@ -477,7 +474,7 @@ def create_api(
         authorize(authorization)
         if library is None or catalog is None:
             return {"items": [], "unread": 0}
-        from hlibrary.notifications import NotificationService
+        from hmanga.notifications import NotificationService
 
         service = NotificationService(catalog.database)
         return {
@@ -499,7 +496,7 @@ def create_api(
     def read_notifications(authorization: str | None = Header(None)) -> dict[str, str]:
         authorize(authorization)
         if catalog:
-            from hlibrary.notifications import NotificationService
+            from hmanga.notifications import NotificationService
 
             NotificationService(catalog.database).mark_all_read()
         return {"status": "ok"}
@@ -533,7 +530,7 @@ def create_api(
     def clear_notifications(authorization: str | None = Header(None)) -> dict[str, str]:
         authorize(authorization)
         if catalog:
-            from hlibrary.notifications import NotificationService
+            from hmanga.notifications import NotificationService
 
             NotificationService(catalog.database).clear()
         return {"status": "ok"}
@@ -544,7 +541,7 @@ def create_api(
     ) -> dict[str, str]:
         authorize(authorization)
         if catalog:
-            from hlibrary.notifications import NotificationService
+            from hmanga.notifications import NotificationService
 
             NotificationService(catalog.database).delete(notification_id)
         return {"status": "ok"}
@@ -561,7 +558,7 @@ def create_api(
             while not await request.is_disconnected():
                 count = 0
                 if catalog:
-                    from hlibrary.notifications import NotificationService
+                    from hmanga.notifications import NotificationService
 
                     count = NotificationService(catalog.database).unread_count()
                 if count != last_count:
@@ -591,8 +588,8 @@ def create_api(
             return """
             <!doctype html><html lang="zh-CN"><meta charset="utf-8">
             <meta name="viewport" content="width=device-width,initial-scale=1">
-            <title>H库</title><body style="font-family:sans-serif;padding:2rem">
-            <h1>H库</h1><p>手机网页尚未构建，局域网服务运行正常。</p></body></html>
+            <title>HManガ</title><body style="font-family:sans-serif;padding:2rem">
+            <h1>HManガ</h1><p>手机网页尚未构建，局域网服务运行正常。</p></body></html>
             """
 
     return app

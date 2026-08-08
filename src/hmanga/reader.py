@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from hlibrary.database import AppMeta, Database, ReadingProgress, Work
-from hlibrary.media import MediaService
+from hmanga.database import AppMeta, Database, ReadingProgress, Work
+from hmanga.media import MediaService
 
 
 class ReaderService:

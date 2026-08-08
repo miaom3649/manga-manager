@@ -7,8 +7,8 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from hlibrary.database import AppMeta, Database, Work
-from hlibrary.library import LIBRARY_ROOT_KEY, LibraryService, file_fingerprint
+from hmanga.database import AppMeta, Database, Work
+from hmanga.library import LIBRARY_ROOT_KEY, LibraryService, file_fingerprint
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,7 +81,7 @@ class MigrationService:
                 if preview.same_disk:
                     os.replace(source, target)
                 else:
-                    temporary = target.with_name(target.name + ".hlibrary-migrate")
+                    temporary = target.with_name(target.name + ".hmanga-migrate")
                     shutil.copy2(source, temporary)
                     if file_fingerprint(source) != file_fingerprint(temporary):
                         temporary.unlink(missing_ok=True)

@@ -42,14 +42,14 @@ jobs:
           npm run build
 
       - name: Build Windows application
-        run: python -m PyInstaller --noconfirm packaging/HLibrary.spec
+        run: python -m PyInstaller --noconfirm packaging/HManga.spec
 
       - name: Smoke-test packaged application
         shell: pwsh
         run: |
-          $process = Start-Process -FilePath "dist/HLibrary/HLibrary.exe" -ArgumentList "--version" -Wait -PassThru
+          $process = Start-Process -FilePath "dist/HManga/HManga.exe" -ArgumentList "--version" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Packaged application smoke test failed with exit code $($process.ExitCode)" }
-          $debugProcess = Start-Process -FilePath "dist/HLibrary/HLibrary-Debug.exe" -ArgumentList "--version" -Wait -PassThru
+          $debugProcess = Start-Process -FilePath "dist/HManga/HManga-Debug.exe" -ArgumentList "--version" -Wait -PassThru
           if ($debugProcess.ExitCode -ne 0) { throw "Debug application smoke test failed with exit code $($debugProcess.ExitCode)" }
 
       - name: Install Inno Setup
@@ -66,10 +66,10 @@ jobs:
           }
 
       - name: Build installer
-        run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" packaging/HLibrary.iss'
+        run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" packaging/HManga.iss'
 
       - uses: actions/upload-artifact@v4
         with:
-          name: HLibrary-Windows
+          name: HManga-Windows
           path: build-output/installer/*.exe
           if-no-files-found: error

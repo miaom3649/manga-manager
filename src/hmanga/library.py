@@ -13,7 +13,7 @@ from PIL import Image, UnidentifiedImageError
 from pillow_heif import register_heif_opener
 from sqlalchemy import delete, func, select
 
-from hlibrary.database import (
+from hmanga.database import (
     AppMeta,
     Database,
     FileObservation,
@@ -21,7 +21,7 @@ from hlibrary.database import (
     ReadingProgress,
     Work,
 )
-from hlibrary.text import natural_key, normalize_text
+from hmanga.text import natural_key, normalize_text
 
 register_heif_opener()
 

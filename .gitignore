@@ -13,8 +13,8 @@ dist/
 *.spec.bak
 frontend/node_modules/
 frontend/dist/
-src/hlibrary/web/assets/
-src/hlibrary/web/index.html
+src/hmanga/web/assets/
+src/hmanga/web/index.html
 *.db
 *.db-shm
 *.db-wal

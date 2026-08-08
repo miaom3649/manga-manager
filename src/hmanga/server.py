@@ -6,11 +6,11 @@ from pathlib import Path
 
 import uvicorn
 
-from hlibrary.api import create_api
-from hlibrary.catalog import CatalogService
-from hlibrary.library import LibraryService
-from hlibrary.media import MediaService
-from hlibrary.pairing import PairingService
+from hmanga.api import create_api
+from hmanga.catalog import CatalogService
+from hmanga.library import LibraryService
+from hmanga.media import MediaService
+from hmanga.pairing import PairingService
 
 
 class ApiServer:
@@ -41,7 +41,7 @@ class ApiServer:
         if self._thread and self._thread.is_alive():
             return
         self._server.should_exit = False
-        self._thread = threading.Thread(target=self._server.run, name="hlibrary-api", daemon=True)
+        self._thread = threading.Thread(target=self._server.run, name="hmanga-api", daemon=True)
         self._thread.start()
 
     def stop(self, timeout: float = 5.0) -> None:

@@ -5,9 +5,9 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-from hlibrary import __version__
-from hlibrary.database import AppMeta, Database
-from hlibrary.library import LibraryService
+from hmanga import __version__
+from hmanga.database import AppMeta, Database
+from hmanga.library import LibraryService
 
 LAST_AUTO_BACKUP = "last_auto_backup_date"
 
@@ -69,7 +69,7 @@ class BackupService:
         finally:
             connection.close()
         if integrity != "ok" or not {"works", "app_meta", "tags"}.issubset(tables):
-            raise ValueError("备份文件损坏或不是 H库 备份")
+            raise ValueError("备份文件损坏或不是有效的 HManガ 备份")
 
     def list_backups(self) -> list[BackupInfo]:
         results = []

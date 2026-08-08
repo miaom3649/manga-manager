@@ -5,8 +5,11 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-APP_NAME = "H库"
-APP_ID = "HLibrary"
+APP_NAME = "HManガ"
+APP_ID = "hmanga"
+LEGACY_APP_ID = "HLibrary"
+DATABASE_NAME = "hmanga.db"
+LEGACY_DATABASE_NAME = "hlibrary.db"
 DEFAULT_API_HOST = "0.0.0.0"
 DEFAULT_API_PORT = 18459
 
@@ -15,9 +18,21 @@ def user_data_dir() -> Path:
     """Return a per-user writable directory without requiring platformdirs."""
     if sys.platform == "win32":
         root = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
-        return root / APP_ID
-    xdg_root = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
-    return xdg_root / APP_ID
+    else:
+        root = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+
+    data_dir = root / APP_ID
+    legacy_dir = root / LEGACY_APP_ID
+    if not data_dir.exists() and legacy_dir.exists():
+        legacy_dir.rename(data_dir)
+
+    if data_dir.exists():
+        for suffix in ("", "-wal", "-shm"):
+            legacy_database = data_dir / f"{LEGACY_DATABASE_NAME}{suffix}"
+            database = data_dir / f"{DATABASE_NAME}{suffix}"
+            if legacy_database.exists() and not database.exists():
+                legacy_database.rename(database)
+    return data_dir
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,7 +48,7 @@ class Settings:
         data_dir = user_data_dir()
         return cls(
             data_dir=data_dir,
-            database_path=data_dir / "hlibrary.db",
+            database_path=data_dir / DATABASE_NAME,
             cache_dir=data_dir / "cache",
         )
 

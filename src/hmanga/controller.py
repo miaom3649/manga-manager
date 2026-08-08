@@ -6,8 +6,8 @@ from threading import Lock
 
 from PySide6.QtCore import QObject, Signal
 
-from hlibrary.library import LibraryService, ScanResult
-from hlibrary.watcher import LibraryWatcher
+from hmanga.library import LibraryService, ScanResult
+from hmanga.watcher import LibraryWatcher
 
 
 class LibraryController(QObject):
@@ -18,7 +18,7 @@ class LibraryController(QObject):
     def __init__(self, service: LibraryService) -> None:
         super().__init__()
         self.service = service
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hlibrary-scan")
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hmanga-scan")
         self._scan_lock = Lock()
         self._scanning = False
         self._rescan_requested = False

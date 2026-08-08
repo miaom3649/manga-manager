@@ -6,8 +6,8 @@ from datetime import UTC, datetime
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.orm import selectinload
 
-from hlibrary.database import AppMeta, Database, Tag, TagGroup, Work, WorkTag
-from hlibrary.text import natural_key, normalize_text, search_terms
+from hmanga.database import AppMeta, Database, Tag, TagGroup, Work, WorkTag
+from hmanga.text import natural_key, normalize_text, search_terms
 
 AUTHOR_GROUP_NAME = "作者"
 AUTHOR_GROUP_NORMALIZED = normalize_text(AUTHOR_GROUP_NAME)

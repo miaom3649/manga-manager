@@ -16,9 +16,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from hlibrary.database import Work
-from hlibrary.desktop.windowing import ScreenCenteredDialog
-from hlibrary.reader import ReaderService
+from hmanga.database import Work
+from hmanga.desktop.windowing import ScreenCenteredDialog
+from hmanga.reader import ReaderService
 
 
 def pixmap_from_bytes(data: bytes) -> QPixmap:

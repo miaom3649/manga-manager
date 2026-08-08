@@ -3,9 +3,9 @@ requires = ["setuptools>=75", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hlibrary"
+name = "hmanga"
 version = "1.0.0"
-description = "H库 - Windows 本地漫画与插画管理器"
+description = "HManガ - Windows 本地漫画与插画管理器"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
@@ -33,7 +33,7 @@ build = [
 ]
 
 [project.scripts]
-hlibrary = "hlibrary.__main__:main"
+hmanga = "hmanga.__main__:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -43,7 +43,7 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-hlibrary = ["web/**/*"]
+hmanga = ["web/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

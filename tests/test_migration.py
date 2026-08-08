@@ -6,9 +6,9 @@ from io import BytesIO
 import pytest
 from PIL import Image
 
-from hlibrary.database import Database
-from hlibrary.library import LibraryService
-from hlibrary.migration import MigrationService
+from hmanga.database import Database
+from hmanga.library import LibraryService
+from hmanga.migration import MigrationService
 
 
 def comic(path) -> None:

@@ -6,10 +6,10 @@ from io import BytesIO
 import pytest
 from PIL import Image
 
-from hlibrary.catalog import CatalogQuery, CatalogService
-from hlibrary.database import Database
-from hlibrary.library import LibraryService
-from hlibrary.upload import UploadService
+from hmanga.catalog import CatalogQuery, CatalogService
+from hmanga.database import Database
+from hmanga.library import LibraryService
+from hmanga.upload import UploadService
 
 
 def make_zip(path, color: str) -> None:

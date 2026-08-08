@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
-from hlibrary.backup import BackupService
-from hlibrary.database import Database, Work
-from hlibrary.library import LibraryService
+from hmanga.backup import BackupService
+from hmanga.database import Database, Work
+from hmanga.library import LibraryService
 
 
 def add_work(database: Database, title: str) -> int:

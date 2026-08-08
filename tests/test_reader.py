@@ -6,10 +6,10 @@ from io import BytesIO
 
 from PIL import Image
 
-from hlibrary.database import Database, Work
-from hlibrary.library import LibraryService, file_fingerprint
-from hlibrary.media import MediaService
-from hlibrary.reader import ReaderService
+from hmanga.database import Database, Work
+from hmanga.library import LibraryService, file_fingerprint
+from hmanga.media import MediaService
+from hmanga.reader import ReaderService
 
 
 def image_bytes() -> bytes:

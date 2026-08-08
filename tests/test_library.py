@@ -6,8 +6,8 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 from PIL import Image
 
-from hlibrary.database import Database, Work
-from hlibrary.library import LibraryService
+from hmanga.database import Database, Work
+from hmanga.library import LibraryService
 
 
 def image_bytes(color: str = "red") -> bytes:

@@ -7,7 +7,7 @@ export default defineConfig({
         environment: "jsdom",
     },
     build: {
-        outDir: "../src/hlibrary/web",
+        outDir: "../src/hmanga/web",
         emptyOutDir: true,
     },
     server: {

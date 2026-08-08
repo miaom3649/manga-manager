@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from hlibrary.database import AppMeta, Database
+from hmanga.database import AppMeta, Database
 
 THEME_KEY = "theme"
 

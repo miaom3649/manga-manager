@@ -3,7 +3,7 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_all
 
 project_root = Path(SPECPATH).parent
-web_root = project_root / "src" / "hlibrary" / "web"
+web_root = project_root / "src" / "hmanga" / "web"
 
 datas = []
 binaries = []
@@ -23,10 +23,10 @@ for package in (
     hiddenimports += package_hidden
 
 if web_root.exists():
-    datas.append((str(web_root), "hlibrary/web"))
+    datas.append((str(web_root), "hmanga/web"))
 
 a = Analysis(
-    [str(project_root / "src" / "hlibrary" / "__main__.py")],
+    [str(project_root / "src" / "hmanga" / "__main__.py")],
     pathex=[str(project_root / "src")],
     binaries=binaries,
     datas=datas,
@@ -42,7 +42,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="HLibrary",
+    name="HManga",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -54,7 +54,7 @@ debug_exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="HLibrary-Debug",
+    name="HManga-Debug",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -68,5 +68,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=True,
-    name="HLibrary",
+    name="HManga",
 )

@@ -4,7 +4,7 @@ import threading
 
 from watchdog.events import FileClosedEvent, FileCreatedEvent, FileOpenedEvent
 
-from hlibrary.watcher import _DebouncedHandler
+from hmanga.watcher import _DebouncedHandler
 
 
 def test_read_only_events_do_not_schedule_scan() -> None:

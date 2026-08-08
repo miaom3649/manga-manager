@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import os
 
-from hlibrary.cache import CacheService
-from hlibrary.database import Database
+from hmanga.cache import CacheService
+from hmanga.database import Database
 
 
 def test_cache_lru_limit_and_clear(tmp_path) -> None:

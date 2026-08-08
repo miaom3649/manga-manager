@@ -2,7 +2,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from hlibrary.database import AppMeta, Database
+from hmanga.database import AppMeta, Database
 
 
 def test_database_initialization(tmp_path: Path) -> None:
