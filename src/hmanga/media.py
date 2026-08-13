@@ -8,6 +8,7 @@ from pathlib import Path
 from PIL import Image, ImageOps, ImageSequence
 
 from hmanga.database import Work
+from hmanga.i18n import tr
 from hmanga.library import LibraryService
 from hmanga.text import natural_key
 
@@ -36,8 +37,13 @@ class MediaService:
     def work_path(self, work: Work) -> Path:
         root = self.library.library_root()
         if root is None:
-            raise FileNotFoundError("尚未设置作品目录")
+            raise FileNotFoundError(tr("label.library_root_unset"))
         return root / Path(work.relative_path)
+
+    def clear_thumbnail_cache(self) -> None:
+        for path in self.thumbnail_dir.glob("*"):
+            if path.is_file():
+                path.unlink(missing_ok=True)
 
     def comic_members(self, work: Work) -> list[str]:
         if work.kind != "comic":
@@ -62,7 +68,7 @@ class MediaService:
         if selected is None:
             members = self.comic_members(work)
             if not members:
-                raise FileNotFoundError("漫画中没有可读取图片")
+                raise FileNotFoundError(tr("label.comic_has_no_readable_images"))
             selected = members[0]
         with zipfile.ZipFile(path) as archive:
             return archive.read(selected)

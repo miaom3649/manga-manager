@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from hmanga.database import AppMeta, Database, ReadingProgress, Work
+from hmanga.i18n import tr
 from hmanga.media import MediaService
 
 
@@ -26,7 +27,7 @@ class ReaderService:
 
     def set_preferred_mode(self, mode: str) -> None:
         if mode not in {"single", "continuous"}:
-            raise ValueError("未知阅读模式")
+            raise ValueError(tr("label.unknown_reading_mode"))
         with self.database.session() as session:
             value = session.get(AppMeta, "windows_reader_mode")
             if value is None:

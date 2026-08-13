@@ -4,6 +4,7 @@ import sys
 from ctypes.util import find_library
 
 from hmanga import __version__
+from hmanga.i18n import tr
 
 
 def configure_linux_window_positioning() -> None:
@@ -20,7 +21,7 @@ def configure_linux_window_positioning() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hmanga", description=f"HManガ {__version__}")
-    parser.add_argument("--version", action="store_true", help="检查程序是否可以正常启动")
+    parser.add_argument("--version", action="store_true", help=tr("confirm.smoke_test"))
     args = parser.parse_args(argv)
     if args.version:
         return 0

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from hmanga.database import AppMeta, Database
+from hmanga.i18n import tr
 
 THEME_KEY = "theme"
 
@@ -12,11 +13,16 @@ class AppearanceService:
     def theme(self) -> str:
         with self.database.session() as session:
             value = session.get(AppMeta, THEME_KEY)
-            return value.value if value and value.value in {"system", "light", "dark"} else "system"
+            # Older versions stored ``system``.  It used the platform's native
+            # palette and therefore looked different from HManガ's dark theme.
+            # Treat it as dark so existing installations migrate automatically.
+            if value and value.value == "light":
+                return "light"
+            return "dark"
 
     def set_theme(self, theme: str) -> None:
         if theme not in {"system", "light", "dark"}:
-            raise ValueError("未知主题")
+            raise ValueError(tr("label.unknown_theme"))
         with self.database.session() as session:
             value = session.get(AppMeta, THEME_KEY)
             if value is None:
@@ -26,6 +32,8 @@ class AppearanceService:
 
 
 def apply_theme(app, theme: str) -> None:
+    if theme == "system":
+        theme = "dark"
     button_style = (
         "QPushButton { background: transparent; border: 2px solid #9a6f7b; "
         "border-radius: 10px; padding: 7px 12px; } "

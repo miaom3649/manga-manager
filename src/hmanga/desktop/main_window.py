@@ -6,7 +6,15 @@ import shutil
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QEvent, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QColor, QIcon, QMovie, QPainter, QPixmap
+from PySide6.QtGui import (
+    QAction,
+    QCloseEvent,
+    QColor,
+    QIcon,
+    QMovie,
+    QPainter,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QAbstractButton,
     QApplication,
@@ -24,7 +32,6 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
-    QMessageBox,
     QPushButton,
     QRadioButton,
     QScrollArea,
@@ -51,16 +58,26 @@ from hmanga.desktop.dialogs import (
     ResetSettingsDialog,
     UploadResultDialog,
     WorkDetailDialog,
+    choose_action,
+    confirm_action,
     open_tag_management,
+    show_message,
 )
 from hmanga.desktop.pairing_dialog import PairingDialog
 from hmanga.desktop.reader_dialog import ReaderDialog
 from hmanga.desktop.tag_widgets import (
     AUTHOR_TAG_COLOR,
-    TAG_PREFIX_COLOR,
     is_long_tag_category,
     tag_chip_text,
     tag_sort_category,
+)
+from hmanga.i18n import (
+    active_language,
+    available_languages,
+    localize_tree,
+    set_language,
+    tr,
+    trf,
 )
 from hmanga.library import LibraryService, ScanResult
 from hmanga.media import MediaService
@@ -135,66 +152,8 @@ class TagSummaryWidget(QWidget):
         for index, chip in enumerate(self.chips):
             chip.setVisible(index < shown)
         self.more.setText(f"+{hidden}")
-        self.more.setToolTip(f"还有 {hidden} 个 Tag")
+        self.more.setToolTip(trf("tags.more", count=hidden))
         self.more.setVisible(hidden > 0)
-
-
-class GroupedTagButton(QPushButton):
-    """Render a disambiguating group prefix separately from the Tag name."""
-
-    def __init__(self, display_name: str, parent=None) -> None:
-        super().__init__(parent)
-        prefix, separator, name = display_name.partition("：")
-        self.prefix_text = prefix + separator
-        self.name_text = name
-        self.setText("")
-        self.setAccessibleName(display_name)
-
-    def paintEvent(self, event) -> None:  # noqa: N802
-        super().paintEvent(event)
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.TextAntialiasing)
-        metrics = painter.fontMetrics()
-        available = max(1, self.contentsRect().width() - 24)
-        full_prefix_width = metrics.horizontalAdvance(self.prefix_text)
-        full_name_width = metrics.horizontalAdvance(self.name_text)
-        full_text_fits = full_prefix_width + full_name_width <= available
-        if full_text_fits:
-            prefix_limit = full_prefix_width
-        else:
-            reserved_name_width = min(full_name_width, max(35, available // 2))
-            prefix_limit = max(1, available - reserved_name_width)
-        prefix = (
-            self.prefix_text
-            if full_text_fits
-            else metrics.elidedText(self.prefix_text, Qt.ElideRight, prefix_limit)
-        )
-        prefix_width = metrics.horizontalAdvance(prefix)
-        name = metrics.elidedText(
-            self.name_text,
-            Qt.ElideRight,
-            max(1, available - prefix_width),
-        )
-        name_width = metrics.horizontalAdvance(name)
-        left = self.contentsRect().center().x() - (prefix_width + name_width) // 2
-        painter.setPen(QColor(TAG_PREFIX_COLOR))
-        painter.drawText(
-            left,
-            self.contentsRect().top(),
-            prefix_width,
-            self.contentsRect().height(),
-            Qt.AlignVCenter,
-            prefix,
-        )
-        painter.setPen(QColor("white") if self.isChecked() else self.palette().text().color())
-        painter.drawText(
-            left + prefix_width,
-            self.contentsRect().top(),
-            name_width,
-            self.contentsRect().height(),
-            Qt.AlignVCenter,
-            name,
-        )
 
 
 class NotificationButton(QPushButton):
@@ -206,7 +165,9 @@ class NotificationButton(QPushButton):
 
     def set_unread_count(self, count: int) -> None:
         self._unread_count = max(0, count)
-        self.setToolTip(f"通知（{count} 条未读）" if count else "通知")
+        self.setToolTip(
+            trf("notifications.unread", count=count) if count else tr("label.notifications")
+        )
         self.update()
 
     def paintEvent(self, event) -> None:  # noqa: N802
@@ -316,7 +277,13 @@ class MainWindow(QMainWindow):
         self.search_timer.setSingleShot(True)
         self.search_timer.setInterval(400)
         self.search_timer.timeout.connect(self.refresh_works)
+        self._catalog_revision = catalog.revision
+        self.sync_timer = QTimer(self)
+        self.sync_timer.setInterval(500)
+        self.sync_timer.timeout.connect(self._sync_catalog_revision)
+        self.sync_timer.start()
         self.setWindowTitle(f"{APP_NAME} {__version__}")
+        self.setWindowFlag(Qt.FramelessWindowHint, True)
         self.setAcceptDrops(True)
         self.resize(1100, 720)
         self._allow_close = False
@@ -331,11 +298,11 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self._build_notifications_page())
         self.pages.addWidget(self._build_settings_page())
 
-        layout.addWidget(self._build_theme_bar())
+        self.theme_bar = self._build_theme_bar()
+        layout.addWidget(self.theme_bar)
         layout.addWidget(self.pages, 1)
         self.setCentralWidget(root)
-        for widget in (root, *root.findChildren(QWidget)):
-            widget.installEventFilter(self)
+        self._install_window_gesture_filter(self)
         controller.scan_started.connect(self._scan_started)
         controller.scan_finished.connect(self._scan_finished)
         controller.scan_failed.connect(self._scan_failed)
@@ -343,6 +310,35 @@ class MainWindow(QMainWindow):
         self.refresh()
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        if event.type() == QEvent.ChildAdded:
+            child = event.child()
+            if isinstance(child, QWidget):
+                # QListWidget rows and other page contents are created after the
+                # main window.  Install after Qt finishes constructing the child.
+                QTimer.singleShot(
+                    0,
+                    lambda widget=child: self._install_window_gesture_filter(widget),
+                )
+        if event.type() == QEvent.MouseMove and not self._has_visible_dialog():
+            edges = self._resize_edges(event.globalPosition().toPoint())
+            self.setCursor(self._resize_cursor(edges))
+        if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+            position = event.globalPosition().toPoint()
+            edges = self._resize_edges(position)
+            handle = self.windowHandle()
+            if (
+                edges
+                and not self.isMaximized()
+                and not self._has_visible_dialog()
+                and handle is not None
+            ):
+                if handle.startSystemResize(edges):
+                    event.accept()
+                    return True
+            if self._is_theme_bar_background(watched) and handle is not None:
+                if handle.startSystemMove():
+                    event.accept()
+                    return True
         if (
             event.type() == QEvent.MouseButtonPress
             and event.button() == Qt.LeftButton
@@ -352,6 +348,52 @@ class MainWindow(QMainWindow):
             self.work_list.clearSelection()
             self.work_list.setCurrentItem(None)
         return super().eventFilter(watched, event)
+
+    def _install_window_gesture_filter(self, widget: QWidget) -> None:
+        widget.setMouseTracking(True)
+        widget.installEventFilter(self)
+        for child in widget.findChildren(QWidget):
+            child.setMouseTracking(True)
+            child.installEventFilter(self)
+
+    def _has_visible_dialog(self) -> bool:
+        return any(dialog.isVisible() for dialog in self.findChildren(QDialog))
+
+    def _resize_edges(self, global_position) -> Qt.Edges:
+        local = self.mapFromGlobal(global_position)
+        margin = 10
+        edges = Qt.Edges()
+        if local.x() <= margin:
+            edges |= Qt.LeftEdge
+        elif local.x() >= self.width() - margin:
+            edges |= Qt.RightEdge
+        if local.y() <= margin:
+            edges |= Qt.TopEdge
+        elif local.y() >= self.height() - margin:
+            edges |= Qt.BottomEdge
+        return edges
+
+    @staticmethod
+    def _resize_cursor(edges: Qt.Edges) -> Qt.CursorShape:
+        if edges in (Qt.LeftEdge | Qt.TopEdge, Qt.RightEdge | Qt.BottomEdge):
+            return Qt.SizeFDiagCursor
+        if edges in (Qt.RightEdge | Qt.TopEdge, Qt.LeftEdge | Qt.BottomEdge):
+            return Qt.SizeBDiagCursor
+        if edges & (Qt.LeftEdge | Qt.RightEdge):
+            return Qt.SizeHorCursor
+        if edges & (Qt.TopEdge | Qt.BottomEdge):
+            return Qt.SizeVerCursor
+        return Qt.ArrowCursor
+
+    def _is_theme_bar_background(self, watched) -> bool:
+        widget = watched if isinstance(watched, QWidget) else None
+        while widget is not None and widget is not self:
+            if isinstance(widget, QAbstractButton):
+                return False
+            if widget is self.theme_bar:
+                return True
+            widget = widget.parentWidget()
+        return False
 
     def _is_main_window_blank_click(self, watched, event) -> bool:
         widget = watched if isinstance(watched, QWidget) else None
@@ -384,7 +426,7 @@ class MainWindow(QMainWindow):
         self.brand_button.setObjectName("brandButton")
         self.brand_button.setIcon(self.style().standardIcon(QStyle.SP_DirHomeIcon))
         self.brand_button.setIconSize(QSize(30, 30))
-        self.brand_button.setToolTip("返回作品")
+        self.brand_button.setToolTip(tr("action.back_to_works"))
         self.brand_button.clicked.connect(lambda: self._show_page(0))
         self.notification_button = NotificationButton()
         self.notification_button.setIcon(self.style().standardIcon(QStyle.SP_MessageBoxInformation))
@@ -395,12 +437,23 @@ class MainWindow(QMainWindow):
         self.settings_button.setIcon(self.style().standardIcon(QStyle.SP_FileDialogDetailedView))
         self.settings_button.setIconSize(QSize(22, 22))
         self.settings_button.setFixedSize(44, 44)
-        self.settings_button.setToolTip("设置")
+        self.settings_button.setToolTip(tr("label.settings"))
         self.settings_button.clicked.connect(lambda: self._show_page(2))
+        self.close_button = QPushButton()
+        self.close_button.setObjectName("mainCloseButton")
+        self.close_button.setIcon(self.style().standardIcon(QStyle.SP_TitleBarCloseButton))
+        self.close_button.setIconSize(QSize(22, 22))
+        self.close_button.setFixedSize(44, 44)
+        self.close_button.setToolTip(tr("label.minimize_to_tray"))
+        self.close_button.setStyleSheet(
+            "QPushButton#mainCloseButton:hover { background: #b94845; border-color: #d96a66; }"
+        )
+        self.close_button.clicked.connect(self.close)
         row.addWidget(self.brand_button)
         row.addStretch(1)
         row.addWidget(self.notification_button)
         row.addWidget(self.settings_button)
+        row.addWidget(self.close_button)
         return bar
 
     def _restore_window_geometry(self) -> None:
@@ -427,26 +480,28 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(page)
         self.search_edit = QLineEdit()
         self.search_edit.setFixedHeight(48)
-        self.search_edit.setPlaceholderText("搜索编号或标题，多个关键词用英文逗号分隔")
+        self.search_edit.setPlaceholderText(tr("message.search_all_fields_multiple_terms"))
         self.search_edit.textChanged.connect(self._search_changed)
         self.search_edit.returnPressed.connect(self._search_now)
         self.sort_box = CenteredComboBox()
-        self.sort_box.addItem("最近添加", "added")
-        self.sort_box.addItem("文件名/编号", "file_name")
-        self.sort_box.addItem("标题", "title")
-        self.sort_box.addItem("星级", "rating")
+        self.sort_box.addItem(tr("label.recently_added"), "added")
+        self.sort_box.addItem(tr("label.file_name_or_number"), "file_name")
+        self.sort_box.addItem(tr("label.title"), "title")
+        self.sort_box.addItem(tr("label.rating"), "rating")
         saved_sort = self.catalog.setting("windows_sort_field", "added")
         self.sort_box.setCurrentIndex(max(0, self.sort_box.findData(saved_sort)))
-        self.direction_button = QPushButton("降序 ↓")
+        self.direction_button = QPushButton(tr("label.descending"))
         self.direction_button.setCheckable(True)
         ascending = self.catalog.setting("windows_sort_direction", "desc") == "asc"
         self.direction_button.setChecked(ascending)
-        self.direction_button.setText("升序 ↑" if ascending else "降序 ↓")
+        self.direction_button.setText(
+            tr("label.ascending") if ascending else tr("label.descending")
+        )
         self.sort_box.currentIndexChanged.connect(self._filters_changed)
         self.direction_button.clicked.connect(self._direction_changed)
-        upload = QPushButton("上传")
+        upload = QPushButton(tr("label.upload"))
         upload.clicked.connect(self.choose_uploads)
-        self.refresh_button = QPushButton("刷新")
+        self.refresh_button = QPushButton(tr("action.refresh"))
         self.refresh_button.clicked.connect(self.controller.request_scan)
         for control in (self.sort_box, self.direction_button, upload, self.refresh_button):
             control.setFixedHeight(40)
@@ -457,7 +512,7 @@ class MainWindow(QMainWindow):
         control_row.addWidget(self.refresh_button)
         control_row.addStretch(1)
 
-        self.scan_status = QLabel("等待扫描")
+        self.scan_status = QLabel(tr("label.waiting_for_scan"))
         content_row = QHBoxLayout()
         filters = self._build_filter_panel()
         self.work_list = WorkListWidget()
@@ -467,14 +522,14 @@ class MainWindow(QMainWindow):
         self.work_list.currentItemChanged.connect(self._work_selection_changed)
         self.work_list.itemActivated.connect(self.open_work)
         page_row = QHBoxLayout()
-        self.first_page = QPushButton("首页")
-        self.previous_page = QPushButton("上一页")
-        self.page_label = QLabel("第 1 / 1 页")
-        self.next_page = QPushButton("下一页")
-        self.last_page = QPushButton("末页")
+        self.first_page = QPushButton(tr("label.home"))
+        self.previous_page = QPushButton(tr("label.previous_page"))
+        self.page_label = QLabel(tr("label.page_one_of_one"))
+        self.next_page = QPushButton(tr("label.next_page"))
+        self.last_page = QPushButton(tr("label.last_page"))
         self.page_jump = QSpinBox()
         self.page_jump.setMinimum(1)
-        jump_button = QPushButton("跳转")
+        jump_button = QPushButton(tr("action.jump"))
         jump_button.clicked.connect(lambda: self.go_page(self.page_jump.value()))
         self.first_page.clicked.connect(lambda: self.go_page(1))
         self.previous_page.clicked.connect(lambda: self.go_page(self.current_page - 1))
@@ -505,23 +560,23 @@ class MainWindow(QMainWindow):
         panel.setFixedWidth(210)
         layout = QVBoxLayout(panel)
         mode_row = QHBoxLayout()
-        self.any_tags = QRadioButton("任意匹配")
-        self.all_tags = QRadioButton("全部匹配")
+        self.any_tags = QRadioButton(tr("label.match_any"))
+        self.all_tags = QRadioButton(tr("label.match_all"))
         self.any_tags.setChecked(True)
         self.any_tags.toggled.connect(self._filters_changed)
         mode_row.addWidget(self.any_tags)
         mode_row.addWidget(self.all_tags)
         layout.addLayout(mode_row)
         self.tag_search = QLineEdit()
-        self.tag_search.setPlaceholderText("搜索 Tag 或分组")
+        self.tag_search.setPlaceholderText(tr("label.search_tags_or_groups"))
         self.tag_search.textChanged.connect(self._refresh_filter_tags)
         layout.addWidget(self.tag_search)
         tag_content = QWidget()
         self.tag_filter_layout = QGridLayout(tag_content)
         self.tag_filter_layout.setContentsMargins(0, 0, 0, 0)
         self.tag_filter_layout.setAlignment(Qt.AlignTop)
-        self.comic_filter = QPushButton("漫画")
-        self.illustration_filter = QPushButton("插画")
+        self.comic_filter = QPushButton(tr("label.comic"))
+        self.illustration_filter = QPushButton(tr("label.illustration"))
         self.kind_filter_group = QButtonGroup(self)
         self.kind_filter_group.setExclusive(True)
         for column, (button, kind) in enumerate(
@@ -544,18 +599,20 @@ class MainWindow(QMainWindow):
         tag_scroll.setWidget(tag_content)
         layout.addWidget(tag_scroll, 1)
         self.rating_filter = CenteredComboBox()
-        self.rating_filter.addItem("全部星级", ("any", 0))
-        self.rating_filter.addItem("未评价", ("unrated", 0))
+        self.rating_filter.addItem(tr("label.all_ratings"), ("any", 0))
+        self.rating_filter.addItem(tr("label.unrated"), ("unrated", 0))
         for rating in range(1, 4):
             self.rating_filter.addItem("★" * rating, ("exact", rating))
         for rating in range(1, 4):
-            self.rating_filter.addItem("★" * rating + " 及以上", ("at_least", rating))
+            self.rating_filter.addItem(
+                "★" * rating + " " + tr("label.rating_or_above"), ("at_least", rating)
+            )
         self.rating_filter.currentIndexChanged.connect(self._filters_changed)
         layout.addWidget(self.rating_filter)
-        clear = QPushButton("清除全部筛选")
+        clear = QPushButton(tr("action.clear_all_filters"))
         clear.clicked.connect(self.clear_filters)
         layout.addWidget(clear)
-        manage_tags = QPushButton("管理")
+        manage_tags = QPushButton(tr("label.manage_tags"))
         manage_tags.clicked.connect(self.open_tag_manager)
         layout.addWidget(manage_tags)
         self._refresh_filter_tags()
@@ -598,7 +655,7 @@ class MainWindow(QMainWindow):
         row = 1
         column = 0
         for category, tag, display_name, full_row, author in classified_tags:
-            button = GroupedTagButton(display_name) if "：" in display_name else QPushButton()
+            button = QPushButton()
             button.setToolTip(display_name)
             button.setProperty(
                 "tagLayoutClass",
@@ -613,14 +670,13 @@ class MainWindow(QMainWindow):
                 ),
             )
             available_text_width = 158 if full_row else 68
-            if not isinstance(button, GroupedTagButton):
-                button.setText(
-                    button.fontMetrics().elidedText(
-                        display_name,
-                        Qt.ElideRight,
-                        available_text_width,
-                    )
+            button.setText(
+                button.fontMetrics().elidedText(
+                    display_name,
+                    Qt.ElideRight,
+                    available_text_width,
                 )
+            )
             button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
             button.setCheckable(True)
             button.setChecked(tag.id in self.selected_tag_ids)
@@ -684,7 +740,7 @@ class MainWindow(QMainWindow):
         content = QWidget()
         content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout = QVBoxLayout(content)
-        title = QLabel("通知")
+        title = QLabel(tr("label.notifications"))
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("font-size: 32px; font-weight: 700;")
         self.notification_list = NotificationListWidget()
@@ -700,9 +756,9 @@ class MainWindow(QMainWindow):
             lambda: QTimer.singleShot(0, self._fill_empty_notification_rows)
         )
         notification_actions = QHBoxLayout()
-        delete_selected = QPushButton("删除所选通知")
+        delete_selected = QPushButton(tr("action.delete_selected_notifications"))
         delete_selected.clicked.connect(self.delete_notification)
-        clear = QPushButton("清空通知")
+        clear = QPushButton(tr("action.clear_notifications"))
         clear.clicked.connect(self.clear_notifications)
         delete_selected.setFixedHeight(42)
         clear.setFixedHeight(42)
@@ -720,20 +776,20 @@ class MainWindow(QMainWindow):
         content = QWidget()
         content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout = QVBoxLayout(content)
-        title = QLabel("设置")
+        title = QLabel(tr("label.settings"))
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("font-size: 32px; font-weight: 700;")
         self.settings_root = QLabel()
         self.settings_root.setAlignment(Qt.AlignCenter)
         self.settings_root.setWordWrap(True)
         self.settings_root.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        choose = QPushButton("更换并迁移作品目录")
+        choose = QPushButton(tr("label.migrate_library"))
         choose.clicked.connect(self.migrate_root)
-        pair = QPushButton("手机配对与设备管理")
+        pair = QPushButton(tr("label.phone_pairing_and_devices"))
         pair.clicked.connect(self.open_pairing)
-        manual_backup = QPushButton("立即手动备份")
+        manual_backup = QPushButton(tr("label.create_manual_backup"))
         manual_backup.clicked.connect(self.create_manual_backup)
-        restore_backup = QPushButton("恢复备份")
+        restore_backup = QPushButton(tr("action.restore_backup"))
         restore_backup.clicked.connect(self.restore_backup)
         self.cache_usage = QLabel()
         self.cache_usage.setAlignment(Qt.AlignCenter)
@@ -742,21 +798,25 @@ class MainWindow(QMainWindow):
             ("1 GB", 1024**3),
             ("2 GB", 2 * 1024**3),
             ("5 GB", 5 * 1024**3),
-            ("不限", None),
+            (tr("label.unlimited"), None),
         ):
             self.cache_limit.addItem(label, value)
         self.cache_limit.setCurrentIndex(max(0, self.cache_limit.findData(self.cache.limit())))
         self.cache_limit.currentIndexChanged.connect(self.change_cache_limit)
-        clear_cache = QPushButton("清理缩略图缓存")
+        clear_cache = QPushButton(tr("label.clear_thumbnail_cache"))
         clear_cache.clicked.connect(self.clear_cache)
-        theme_label = QLabel("外观主题")
+        theme_label = QLabel(tr("label.appearance_theme"))
         theme_label.setAlignment(Qt.AlignCenter)
         self.theme_box = CenteredComboBox()
-        self.theme_box.addItem("跟随系统", "system")
-        self.theme_box.addItem("浅色", "light")
-        self.theme_box.addItem("深色", "dark")
+        self.theme_box.addItem(tr("label.light_theme"), "light")
+        self.theme_box.addItem(tr("label.dark_theme"), "dark")
         self.theme_box.setCurrentIndex(max(0, self.theme_box.findData(self.appearance.theme())))
         self.theme_box.currentIndexChanged.connect(self.change_theme)
+        self.language_box = CenteredComboBox()
+        for code, name in available_languages():
+            self.language_box.addItem(name, code)
+        self.language_box.setCurrentIndex(max(0, self.language_box.findData(active_language())))
+        self.language_box.currentIndexChanged.connect(self.change_language)
         for button in (choose, pair, manual_backup, restore_backup, clear_cache):
             button.setFixedHeight(42)
         layout.addWidget(title)
@@ -765,13 +825,14 @@ class MainWindow(QMainWindow):
         layout.addWidget(pair)
         layout.addWidget(manual_backup)
         layout.addWidget(restore_backup)
+        layout.addWidget(theme_label)
+        layout.addWidget(self.theme_box)
+        layout.addWidget(self.language_box)
         layout.addWidget(self.cache_usage)
         layout.addWidget(self.cache_limit)
         layout.addWidget(clear_cache)
-        layout.addWidget(theme_label)
-        layout.addWidget(self.theme_box)
         layout.addStretch(1)
-        reset = QPushButton("恢复所有设置")
+        reset = QPushButton(tr("action.reset_all_settings"))
         reset.setFixedHeight(46)
         reset.setStyleSheet(
             "QPushButton { background: #d93025; color: white; "
@@ -789,7 +850,9 @@ class MainWindow(QMainWindow):
             return
         root = self.library.library_root()
         if root is None:
-            QMessageBox.critical(self, "恢复设置失败", "尚未设置作品目录")
+            show_message(
+                self, tr("error.reset_settings_failed"), tr("label.library_root_unset"), danger=True
+            )
             return
         database = self.catalog.database
         rollback = database.path.with_name(database.path.name + ".reset-rollback")
@@ -810,7 +873,6 @@ class MainWindow(QMainWindow):
             CatalogService(database)
             self.library.scan()
             self.notifications.clear()
-            removed_backups = self.backups.delete_all()
             removed_cache = self.cache.clear()
         except Exception as exc:
             database.close()
@@ -824,7 +886,7 @@ class MainWindow(QMainWindow):
             self.controller.start()
             if self.server is not None:
                 self.server.start()
-            QMessageBox.critical(self, "恢复设置失败", str(exc))
+            show_message(self, tr("error.reset_settings_failed"), str(exc), danger=True)
             return
         rollback.unlink(missing_ok=True)
         self._startup_backup_checked = True
@@ -833,7 +895,8 @@ class MainWindow(QMainWindow):
             self.server.start()
         app = QApplication.instance()
         if app is not None:
-            apply_theme(app, "system")
+            apply_theme(app, "dark")
+        set_language(database, "zh-CN")
         self.selected_tag_ids.clear()
         self.selected_kinds = {"comic"}
         self.comic_filter.setChecked(True)
@@ -841,22 +904,22 @@ class MainWindow(QMainWindow):
         self.tag_search.clear()
         self.rating_filter.setCurrentIndex(0)
         self.any_tags.setChecked(True)
-        self.theme_box.setCurrentIndex(max(0, self.theme_box.findData("system")))
+        self.theme_box.setCurrentIndex(max(0, self.theme_box.findData("dark")))
+        self.language_box.setCurrentIndex(max(0, self.language_box.findData("zh-CN")))
         self.cache_limit.setCurrentIndex(max(0, self.cache_limit.findData(self.cache.limit())))
         self._refresh_filter_tags()
         self.refresh()
-        QMessageBox.information(
+        show_message(
             self,
-            "恢复完成",
-            f"数据库已重建，删除 {removed_backups} 个备份文件和 "
-            f"{removed_cache} 个缓存文件。作品已重新扫描。",
+            tr("status.restore_complete"),
+            trf("reset.completed", cache_files=removed_cache),
         )
 
     def choose_root(self) -> None:
         current = self.library.library_root()
         selected = QFileDialog.getExistingDirectory(
             self,
-            f"选择 {APP_NAME} 漫画主目录",
+            trf("dialog.choose_library", app_name=APP_NAME),
             str(current or ""),
         )
         if selected:
@@ -869,30 +932,37 @@ class MainWindow(QMainWindow):
     def migrate_root(self) -> None:
         current = self.library.library_root()
         selected = QFileDialog.getExistingDirectory(
-            self, f"选择新的 {APP_NAME} 主目录", str(current.parent if current else "")
+            self,
+            trf("dialog.choose_new_library", app_name=APP_NAME),
+            str(current.parent if current else ""),
         )
         if not selected:
             return
         try:
             preview = self.migrations.preview(Path(selected))
         except Exception as exc:
-            QMessageBox.critical(self, "无法迁移", str(exc))
+            show_message(self, tr("error.migration_unavailable"), str(exc), danger=True)
             return
         if preview.conflicts or preview.missing:
             details = ""
             if preview.conflicts:
-                details += "同名冲突：\n" + "\n".join(preview.conflicts) + "\n"
+                details += (
+                    tr("label.duplicate_conflict") + "\n" + "\n".join(preview.conflicts) + "\n"
+                )
             if preview.missing:
-                details += "文件丢失：\n" + "\n".join(preview.missing)
-            QMessageBox.warning(self, "迁移预检未通过", details)
+                details += tr("label.missing_file") + "\n" + "\n".join(preview.missing)
+            show_message(self, tr("label.migration_precheck_failed"), details, danger=True)
             return
-        answer = QMessageBox.question(
+        if not confirm_action(
             self,
-            "确认迁移作品目录",
-            f"将迁移 {preview.files} 个已收录作品（{preview.bytes / 1024 / 1024:.1f} MB）。"
-            "异常文件、未知目录和旧备份不会迁移。是否继续？",
-        )
-        if answer != QMessageBox.Yes:
+            tr("confirm.confirm_library_migration"),
+            trf(
+                "migration.confirm",
+                files=preview.files,
+                size_mb=f"{preview.bytes / 1024 / 1024:.1f}",
+            ),
+            confirm_text=tr("label.start_migration"),
+        ):
             return
         self.controller.pause_watching()
         self.controller.wait_until_idle()
@@ -901,13 +971,22 @@ class MainWindow(QMainWindow):
             self.controller.start()
         except Exception as exc:
             self.controller.start()
-            QMessageBox.critical(self, "迁移失败", f"迁移已回滚。\n{exc}")
+            show_message(
+                self,
+                tr("error.migration_failed"),
+                trf("migration.rolled_back", error=exc),
+                danger=True,
+            )
             return
-        QMessageBox.information(
+        show_message(
             self,
-            "迁移完成",
-            f"已迁移 {result.files} 个作品。"
-            + ("旧目录已为空并删除。" if result.old_root_removed else "旧目录含其他内容，已保留。"),
+            tr("status.migration_complete"),
+            trf("migration.completed", files=result.files)
+            + (
+                tr("message.legacy_directory_deleted")
+                if result.old_root_removed
+                else tr("message.legacy_directory_retained")
+            ),
         )
         self.refresh()
 
@@ -915,18 +994,20 @@ class MainWindow(QMainWindow):
         try:
             path = self.backups.create("手动")
         except Exception as exc:
-            QMessageBox.critical(self, "备份失败", str(exc))
+            show_message(self, tr("error.backup_failed"), str(exc), danger=True)
             return
-        QMessageBox.information(self, "备份完成", f"备份已保存：\n{path}")
+        show_message(self, tr("status.backup_complete"), trf("backup.saved", path=path))
 
     def change_cache_limit(self) -> None:
         self.cache.set_limit(self.cache_limit.currentData())
-        self.cache_usage.setText(f"缩略图缓存：{self.cache.usage() / 1024 / 1024:.1f} MB")
+        self.cache_usage.setText(
+            trf("cache.usage", size_mb=f"{self.cache.usage() / 1024 / 1024:.1f}")
+        )
 
     def clear_cache(self) -> None:
         removed = self.cache.clear()
-        self.cache_usage.setText("缩略图缓存：0.0 MB")
-        QMessageBox.information(self, "缓存已清理", f"已删除 {removed} 个缓存文件。")
+        self.cache_usage.setText(tr("label.thumbnail_cache_empty"))
+        show_message(self, tr("label.cache_cleared"), trf("cache.cleared", files=removed))
 
     def change_theme(self) -> None:
         theme = self.theme_box.currentData()
@@ -935,22 +1016,29 @@ class MainWindow(QMainWindow):
         if app:
             apply_theme(app, theme)
 
+    def change_language(self) -> None:
+        code = self.language_box.currentData()
+        if not code:
+            return
+        set_language(self.catalog.database, code)
+        self.refresh()
+        localize_tree(self)
+
     def restore_backup(self) -> None:
         selected, _ = QFileDialog.getOpenFileName(
             self,
-            f"选择 {APP_NAME} 备份",
+            trf("dialog.choose_backup", app_name=APP_NAME),
             str(self.backups.backup_directory()),
-            f"{APP_NAME} 备份 (*.sqlite)",
+            trf("dialog.backup_filter", app_name=APP_NAME),
         )
         if not selected:
             return
-        answer = QMessageBox.question(
+        if not confirm_action(
             self,
-            "确认恢复备份",
-            "恢复会覆盖当前管理资料，但不会修改漫画 ZIP 或插画原文件。"
-            "恢复前会先创建保护备份。是否继续？",
-        )
-        if answer != QMessageBox.Yes:
+            tr("confirm.confirm_restore_backup"),
+            tr("confirm.restore_backup_warning"),
+            confirm_text=tr("action.restore_backup"),
+        ):
             return
         try:
             protection = self.backups.restore(Path(selected))
@@ -958,22 +1046,23 @@ class MainWindow(QMainWindow):
             self._refresh_filter_tags()
             self.refresh()
         except Exception as exc:
-            QMessageBox.critical(self, "恢复失败", str(exc))
+            show_message(self, tr("error.restore_failed"), str(exc), danger=True)
             return
-        QMessageBox.information(self, "恢复完成", f"恢复前保护备份：\n{protection}")
+        show_message(self, tr("status.restore_complete"), trf("backup.protection", path=protection))
 
     def refresh(self) -> None:
         root = self.library.library_root()
-        root_text = str(root) if root else "尚未设置漫画目录"
-        self.settings_root.setText(f"当前漫画目录：{root_text}")
-        self.cache_usage.setText(f"缩略图缓存：{self.cache.usage() / 1024 / 1024:.1f} MB")
+        root_text = str(root) if root else tr("label.comic_root_unset")
+        self.settings_root.setText(trf("library.current_root", root=root_text))
+        self.cache_usage.setText(
+            trf("cache.usage", size_mb=f"{self.cache.usage() / 1024 / 1024:.1f}")
+        )
         self.refresh_button.setEnabled(root is not None)
 
         self.refresh_works()
 
         self.notification_list.clear()
         notifications = self.library.list_notifications()
-        self._notifications_empty = not notifications
         for item in notifications:
             row = QListWidgetItem()
             row.setData(Qt.UserRole, item.id)
@@ -987,11 +1076,16 @@ class MainWindow(QMainWindow):
             notification_row.setContentsMargins(14, 0, 14, 0)
             self._style_notification_row(notification_row, item.read_at is not None)
             self.notification_list.setItemWidget(row, notification_row)
-        if not notifications:
-            self._fill_empty_notification_rows()
+        self._fill_empty_notification_rows()
         unread = self.notifications.unread_count()
         self.notification_button.set_unread_count(unread)
         self.notification_count_changed.emit(unread)
+        self._catalog_revision = self.catalog.revision
+
+    def _sync_catalog_revision(self) -> None:
+        revision = self.catalog.revision
+        if revision != self._catalog_revision:
+            self.refresh()
 
     def _show_page(self, index: int) -> None:
         self.pages.setCurrentIndex(index)
@@ -1005,23 +1099,29 @@ class MainWindow(QMainWindow):
         )
 
     def _fill_empty_notification_rows(self) -> None:
-        if not getattr(self, "_notifications_empty", False):
-            return
         height = self.notification_list.viewport().height()
         if height <= 0:
             return
-        count = max(1, math.ceil(height / 54))
-        base_height, remainder = divmod(height, count)
-        current_height = sum(
+
+        # Remove only old empty slots; real notifications remain untouched.
+        for index in range(self.notification_list.count() - 1, -1, -1):
+            item = self.notification_list.item(index)
+            if item.data(Qt.UserRole) is None:
+                widget = self.notification_list.itemWidget(item)
+                self.notification_list.takeItem(index)
+                if widget is not None:
+                    widget.deleteLater()
+
+        occupied = sum(
             self.notification_list.item(index).sizeHint().height()
             for index in range(self.notification_list.count())
         )
-        if self.notification_list.count() == count and current_height == height:
-            return
-        self.notification_list.clear()
+        remaining = max(0, height - occupied)
+        count = math.ceil(remaining / 54)
         for index in range(count):
             placeholder = QListWidgetItem()
-            placeholder.setSizeHint(QSize(0, base_height + (1 if index < remainder else 0)))
+            row_height = min(54, remaining - index * 54)
+            placeholder.setSizeHint(QSize(0, max(1, row_height)))
             self.notification_list.addItem(placeholder)
             placeholder_row = QFrame()
             self._style_notification_row(placeholder_row, False)
@@ -1034,7 +1134,13 @@ class MainWindow(QMainWindow):
             self.refresh()
 
     def clear_notifications(self) -> None:
-        if QMessageBox.question(self, "清空通知", "确认删除全部通知？") == QMessageBox.Yes:
+        if confirm_action(
+            self,
+            tr("confirm.clear_notifications_title"),
+            tr("confirm.clear_all_notifications_warning"),
+            confirm_text=tr("confirm.confirm_clear"),
+            danger=True,
+        ):
             self.notifications.clear()
             self.refresh()
 
@@ -1062,16 +1168,17 @@ class MainWindow(QMainWindow):
         else:
             text = "\n".join(str(value) for value in details)
         if kind == "files_added" and details:
-            answer = QMessageBox.question(
+            edit_added = confirm_action(
                 self,
-                "新增文件列表",
-                text + "\n\n是否依次编辑这些作品的标题、封面、Tag 和星级？",
+                tr("label.added_files_list"),
+                text + "\n\n" + tr("confirm.edit_added_works_prompt"),
+                confirm_text=tr("label.edit_sequentially"),
             )
-            if answer == QMessageBox.Yes:
+            if edit_added:
                 for work in self.catalog.find_by_file_names(details):
                     self.show_work_detail(work.id)
             return
-        QMessageBox.information(self, "通知详情", text or "没有详细文件列表")
+        show_message(self, tr("label.notification_details"), text or tr("label.no_file_details"))
 
     def refresh_works(self) -> None:
         page = self.catalog.query(
@@ -1093,10 +1200,14 @@ class MainWindow(QMainWindow):
         self._animated_movies: list[QMovie] = []
         all_tags = self.catalog.list_tags()
         for work in page.items:
-            kind = "漫画" if work.kind == "comic" else "插画"
+            kind = tr("label.comic") if work.kind == "comic" else tr("label.illustration")
             display_title = work.title or Path(work.file_name).stem
             identity = work.number if work.kind == "comic" else work.file_name
-            pending = " · 内容已替换，待确认" if work.status == "replacement_pending" else ""
+            pending = (
+                f" {tr('confirm.replacement_pending')}"
+                if work.status == "replacement_pending"
+                else ""
+            )
             custom_tag_entries = [
                 (
                     self.catalog.tag_display_name(tag, all_tags),
@@ -1142,7 +1253,7 @@ class MainWindow(QMainWindow):
                 else:
                     image.setPixmap(QPixmap(str(thumbnail)))
             except Exception:
-                image.setText("无封面")
+                image.setText(tr("label.no_cover"))
             row_layout.addWidget(image)
             text_widget = QWidget()
             text_layout = QVBoxLayout(text_widget)
@@ -1157,8 +1268,10 @@ class MainWindow(QMainWindow):
             self.work_list.addItem(item)
             self.work_list.setItemWidget(item, row_widget)
         if not page.items:
-            self.work_list.addItem(f"尚无作品。选择目录后，{APP_NAME} 会扫描有效 ZIP 和插画。")
-        self.page_label.setText(f"共 {page.total} 部 · 第 {page.page} / {page.pages} 页")
+            self.work_list.addItem(trf("works.empty", app_name=APP_NAME))
+        self.page_label.setText(
+            trf("works.page_summary", total=page.total, page=page.page, pages=page.pages)
+        )
         self.page_jump.setMaximum(page.pages)
         self.page_jump.setValue(page.page)
         self.first_page.setEnabled(page.page > 1)
@@ -1181,7 +1294,9 @@ class MainWindow(QMainWindow):
         self.refresh_works()
 
     def _direction_changed(self, ascending: bool) -> None:
-        self.direction_button.setText("升序 ↑" if ascending else "降序 ↓")
+        self.direction_button.setText(
+            tr("label.ascending") if ascending else tr("label.descending")
+        )
         self.catalog.set_setting("windows_sort_direction", "asc" if ascending else "desc")
         self._filters_changed()
 
@@ -1214,12 +1329,22 @@ class MainWindow(QMainWindow):
         """Run details and reader sequentially so no hidden modal blocks the main window."""
         while True:
             requested: list[int] = []
+            deletion_requested: list[int] = []
             dialog = WorkDetailDialog(work_id, self.catalog, self.media, self)
             dialog.saved.connect(self.refresh_works)
+            # Merely remember the request here.  A queued Qt signal can still run
+            # inside dialog.exec()'s nested event loop, while the confirmation and
+            # detail overlays are being torn down.  Perform the destructive work
+            # only after exec() has returned below.
+            dialog.deletion_requested.connect(deletion_requested.append)
             dialog.reading_requested.connect(requested.append)
             dialog.kind_filter_requested.connect(self._filter_kind_from_detail)
             dialog.tag_filter_requested.connect(self._filter_tag_from_detail)
             dialog.exec()
+            if deletion_requested:
+                self._delete_work(deletion_requested[0])
+                dialog.deleteLater()
+                return
             if not requested:
                 return
             work = self.catalog.get_work(requested[0])
@@ -1232,6 +1357,30 @@ class MainWindow(QMainWindow):
                 self.show()
                 self.raise_()
                 self.activateWindow()
+
+    def _delete_work(self, work_id: int) -> None:
+        """Delete after the nested detail dialogs have completely unwound."""
+        work = self.catalog.get_work(work_id)
+        if work is None:
+            return
+        try:
+            root = self.library.library_root()
+            if root is None:
+                raise ValueError(tr("label.library_root_unset"))
+            root = root.resolve()
+            path = self.media.work_path(work).resolve()
+            if not path.is_relative_to(root):
+                raise ValueError(tr("label.work_outside_library"))
+            if not path.is_file():
+                raise FileNotFoundError(trf("error.file_missing", file_name=work.file_name))
+            with self.library.operation_lock:
+                path.unlink()
+                self.catalog.delete_work(work.id)
+                self.media.clear_thumbnail_cache()
+        except (OSError, ValueError) as exc:
+            show_message(self, tr("error.delete_failed"), str(exc), danger=True)
+            return
+        self.refresh_works()
 
     def _filter_kind_from_detail(self, kind: str) -> None:
         self._show_page(0)
@@ -1267,7 +1416,7 @@ class MainWindow(QMainWindow):
         self.refresh_works()
 
     def choose_uploads(self) -> None:
-        selected, _ = QFileDialog.getOpenFileNames(self, "选择要上传的作品")
+        selected, _ = QFileDialog.getOpenFileNames(self, tr("action.select_upload_files"))
         if selected:
             self.open_uploads([Path(path) for path in selected])
 
@@ -1275,24 +1424,22 @@ class MainWindow(QMainWindow):
         try:
             task = self.uploads.prepare(paths)
         except (OSError, ValueError) as exc:
-            UploadResultDialog("无法加入作品库", str(exc), self).exec()
+            UploadResultDialog(tr("error.add_to_library_failed"), str(exc), self).exec()
             return
         if task.invalid:
             lines = [f"{item.source.name}：{item.error}" for item in task.invalid]
             self.uploads.cancel(task)
             UploadResultDialog(
-                "文件不合法",
-                "本次选择包含不能加入作品库的文件，因此整批均未加入。\n\n" + "\n".join(lines),
+                tr("label.invalid_file"),
+                tr("message.invalid_upload_batch") + "\n\n" + "\n".join(lines),
                 self,
             ).exec()
             return
         if task.conflicts:
             names = "\n".join(item.source.name for item in task.conflicts)
             decision = UploadResultDialog(
-                "发现同名文件",
-                f"有 {len(task.conflicts)} 个文件与作品库重名：\n\n{names}\n\n"
-                "覆盖后将使用新文件的默认标题、空 Tag、未评价和默认封面，"
-                "旧阅读进度会被清除。",
+                tr("label.duplicate_files_found"),
+                trf("upload.conflicts", count=len(task.conflicts), names=names),
                 self,
                 overwrite=True,
             )
@@ -1304,8 +1451,12 @@ class MainWindow(QMainWindow):
         except (OSError, ValueError) as exc:
             if task.id in self.uploads.active_tasks:
                 self.uploads.cancel(task)
-            UploadResultDialog("加入失败", str(exc), self).exec()
+            UploadResultDialog(tr("error.add_failed"), str(exc), self).exec()
             return
+        # UploadService writes the Work rows before the follow-up scan.  The
+        # scan therefore sees existing files and has no `added` entries from
+        # which to publish a mobile refresh, so publish immediately here.
+        self.catalog.notify_library_changed()
         self.controller.request_scan()
         self.refresh_works()
 
@@ -1321,12 +1472,19 @@ class MainWindow(QMainWindow):
 
     def _scan_started(self) -> None:
         self.refresh_button.setEnabled(False)
-        self.scan_status.setText("正在扫描并校验作品…")
+        self.scan_status.setText(tr("status.scanning_and_validating"))
 
     def _scan_finished(self, result: ScanResult) -> None:
+        if result.added or result.missing or result.renamed or result.replacements:
+            self.catalog.notify_library_changed()
         self.scan_status.setText(
-            f"扫描完成：漫画 {result.comics}，插画 {result.illustrations}，"
-            f"新增 {len(result.added)}，异常 {len(result.invalid)}"
+            trf(
+                "scan.completed",
+                comics=result.comics,
+                illustrations=result.illustrations,
+                added=len(result.added),
+                invalid=len(result.invalid),
+            )
         )
         self.refresh()
         if result.replacements:
@@ -1336,32 +1494,31 @@ class MainWindow(QMainWindow):
             try:
                 self.backups.automatic_if_due()
             except Exception as exc:
-                self.scan_status.setText(self.scan_status.text() + f" · 自动备份失败：{exc}")
+                self.scan_status.setText(
+                    self.scan_status.text() + trf("backup.automatic_failed", error=exc)
+                )
 
     def resolve_replacements(self) -> None:
         for work in self.library.pending_replacements():
-            box = QMessageBox(self)
-            box.setWindowTitle("作品文件已被替换")
-            box.setText(
-                f"“{work.file_name}”已被新的同名文件替换。\n"
-                "请选择保留原标题、Tag、星级和封面选择，或将其当作全新作品。"
+            choice = choose_action(
+                self,
+                tr("label.work_file_replaced"),
+                trf("replacement.confirm", file_name=work.file_name),
+                [
+                    (tr("label.retain_original_metadata"), "preserve"),
+                    (tr("label.import_as_new_work"), "fresh"),
+                ],
             )
-            preserve = box.addButton("保留原资料", QMessageBox.AcceptRole)
-            fresh = box.addButton("当作新作品", QMessageBox.DestructiveRole)
-            box.addButton("稍后处理", QMessageBox.RejectRole)
-            box.exec()
-            if box.clickedButton() not in {preserve, fresh}:
+            if choice is None:
                 continue
             try:
-                self.library.resolve_replacement(
-                    work.id, preserve_metadata=box.clickedButton() is preserve
-                )
+                self.library.resolve_replacement(work.id, preserve_metadata=choice == "preserve")
             except Exception as exc:
-                QMessageBox.critical(self, "处理失败", str(exc))
+                show_message(self, tr("error.processing_failed"), str(exc), danger=True)
         self.refresh()
 
     def _scan_failed(self, message: str) -> None:
-        self.scan_status.setText(f"扫描失败：{message}")
+        self.scan_status.setText(trf("scan.failed", error=message))
         self.refresh_button.setEnabled(True)
 
     def bind_tray(self, tray: QSystemTrayIcon) -> None:
@@ -1375,20 +1532,20 @@ class MainWindow(QMainWindow):
         event.ignore()
         self.hide()
         if hasattr(self, "_tray"):
-            self._tray.showMessage(
-                APP_NAME, f"{APP_NAME} 已缩小到系统托盘，手机连接服务继续运行。"
-            )
+            self._tray.showMessage(APP_NAME, trf("tray.minimized", app_name=APP_NAME))
 
     def exit_application(self) -> None:
         if self.uploads.active_count():
-            box = QMessageBox(self)
-            box.setWindowTitle("上传任务尚未完成")
-            box.setText(f"当前有 {self.uploads.active_count()} 个上传任务。")
-            wait = box.addButton("等待任务完成后退出", QMessageBox.AcceptRole)
-            cancel = box.addButton("取消当前任务并退出", QMessageBox.DestructiveRole)
-            box.addButton(QMessageBox.Cancel)
-            box.exec()
-            if box.clickedButton() is wait:
+            choice = choose_action(
+                self,
+                tr("status.upload_in_progress"),
+                trf("upload.active_tasks", count=self.uploads.active_count()),
+                [
+                    (tr("status.wait_for_task_before_exit"), "wait"),
+                    (tr("action.cancel_task_and_exit"), "cancel"),
+                ],
+            )
+            if choice == "wait":
                 self.hide()
                 timer = QTimer(self)
                 timer.setInterval(500)
@@ -1402,7 +1559,7 @@ class MainWindow(QMainWindow):
                 timer.start()
                 self._exit_timer = timer
                 return
-            if box.clickedButton() is cancel:
+            if choice == "cancel":
                 self.uploads.cancel_all()
             else:
                 return
@@ -1426,8 +1583,8 @@ def create_tray(app: QApplication, window: MainWindow) -> QSystemTrayIcon:
 
         menu = QMenu()
         tray.setContextMenu(menu)
-    show_action = QAction(f"打开 {APP_NAME}", tray)
-    exit_action = QAction("退出", tray)
+    show_action = QAction(trf("tray.open", app_name=APP_NAME), tray)
+    exit_action = QAction(tr("action.exit"), tray)
     show_action.triggered.connect(window.showNormal)
     show_action.triggered.connect(window.activateWindow)
     exit_action.triggered.connect(window.exit_application)
@@ -1451,7 +1608,9 @@ def create_tray(app: QApplication, window: MainWindow) -> QSystemTrayIcon:
             painter.drawEllipse(20, 0, 12, 12)
             painter.end()
         tray.setIcon(QIcon(pixmap))
-        tray.setToolTip(f"{APP_NAME} · {count} 条未读通知" if count else APP_NAME)
+        tray.setToolTip(
+            trf("notifications.tray", app_name=APP_NAME, count=count) if count else APP_NAME
+        )
 
     window.notification_count_changed.connect(update_badge)
     update_badge(window.notifications.unread_count())

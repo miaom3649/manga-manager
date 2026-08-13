@@ -29,6 +29,9 @@ class ApiServer:
             "port": port,
             "log_level": "info",
             "access_log": False,
+            # Desktop exit owns the server lifecycle. Close browser requests
+            # immediately instead of waiting for clients to leave.
+            "timeout_graceful_shutdown": 0,
         }
         # 正式版无控制台时禁用控制台日志；调试版有控制台时保留日志。
         if sys.stdout is None or sys.stderr is None:
@@ -44,7 +47,10 @@ class ApiServer:
         self._thread = threading.Thread(target=self._server.run, name="hmanga-api", daemon=True)
         self._thread.start()
 
-    def stop(self, timeout: float = 5.0) -> None:
+    def stop(self, timeout: float = 2.0) -> None:
         self._server.should_exit = True
         if self._thread:
             self._thread.join(timeout=timeout)
+            if self._thread.is_alive():
+                self._server.force_exit = True
+                self._thread.join(timeout=timeout)

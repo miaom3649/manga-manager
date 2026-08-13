@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from hmanga.database import AppMeta, Database
+from hmanga.i18n import tr
 
 CACHE_LIMIT_KEY = "cache_limit_bytes"
 DEFAULT_CACHE_LIMIT = 1024**3
@@ -24,7 +25,7 @@ class CacheService:
 
     def set_limit(self, value: int | None) -> None:
         if value is not None and value <= 0:
-            raise ValueError("缓存上限必须大于零")
+            raise ValueError(tr("label.cache_limit_positive"))
         text = "unlimited" if value is None else str(value)
         with self.database.session() as session:
             setting = session.get(AppMeta, CACHE_LIMIT_KEY)

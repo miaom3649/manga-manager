@@ -17,6 +17,7 @@ from hmanga.controller import LibraryController
 from hmanga.database import Database
 from hmanga.desktop.main_window import MainWindow, create_tray
 from hmanga.desktop.windowing import install_dialog_centering
+from hmanga.i18n import configure_localization, install_localization
 from hmanga.library import LibraryService
 from hmanga.media import MediaService
 from hmanga.migration import MigrationService
@@ -44,6 +45,7 @@ def run() -> int:
     notifications.prune()
     appearance = AppearanceService(database)
     controller = LibraryController(library)
+    configure_localization(database, settings.data_dir / "locales")
 
     web_root = Path(str(files("hmanga").joinpath("web")))
     server = ApiServer(
@@ -63,6 +65,7 @@ def run() -> int:
     app.setOrganizationName(APP_ID)
     app.setQuitOnLastWindowClosed(False)
     dialog_centering = install_dialog_centering(app)
+    localization = install_localization(app)
     apply_theme(app, appearance.theme())
 
     window = MainWindow(
@@ -81,6 +84,7 @@ def run() -> int:
     )
     tray = create_tray(app, window)
     app._dialog_centering = dialog_centering  # type: ignore[attr-defined]
+    app._localization = localization  # type: ignore[attr-defined]
 
     def shutdown() -> None:
         controller.stop()

@@ -43,7 +43,7 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-hmanga = ["web/**/*"]
+hmanga = ["web/**/*", "locales/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

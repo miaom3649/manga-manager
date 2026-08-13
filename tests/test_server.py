@@ -19,3 +19,4 @@ def test_server_keeps_logging_with_console() -> None:
     server = ApiServer("127.0.0.1", 18459)
 
     assert server._server.config.log_config is not None
+    assert server._server.config.timeout_graceful_shutdown == 0

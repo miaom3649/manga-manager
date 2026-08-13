@@ -11,7 +11,9 @@ from pathlib import Path
 from sqlalchemy import delete, select
 
 from hmanga.database import Database, ReadingProgress, Tag, Work
+from hmanga.i18n import tr
 from hmanga.library import (
+    ILLUSTRATION_DIRECTORY,
     LibraryService,
     file_fingerprint,
     inspect_comic,
@@ -69,7 +71,7 @@ class UploadService:
         seen: set[tuple[str, str]] = set()
         root = self.library.library_root()
         if root is None:
-            raise ValueError("尚未设置作品目录")
+            raise ValueError(tr("label.library_root_unset"))
         try:
             for index, source in enumerate(sources):
                 source = source.resolve()
@@ -79,11 +81,15 @@ class UploadService:
                 key = (kind or "invalid", source.name.casefold())
                 duplicate = key in seen
                 seen.add(key)
-                target = root / source.name if kind == "comic" else root / "插画" / source.name
+                target = (
+                    root / source.name
+                    if kind == "comic"
+                    else root / ILLUSTRATION_DIRECTORY / source.name
+                )
                 valid = kind is not None and not duplicate
-                error = "同一批次存在同名文件" if duplicate else None
+                error = tr("label.duplicate_in_batch") if duplicate else None
                 if kind is None:
-                    error = "不是有效的漫画 ZIP 或可解码单张图片"
+                    error = tr("message.invalid_work_file")
                 items.append(
                     UploadItem(
                         source=source,
@@ -122,12 +128,12 @@ class UploadService:
 
     def commit(self, task: UploadTask, allow_overwrite: bool) -> list[int]:
         if task.invalid:
-            raise ValueError("任务中仍有不合格文件")
+            raise ValueError(tr("error.upload_has_invalid_files"))
         if task.conflicts and not allow_overwrite:
-            raise FileExistsError("存在同名文件")
+            raise FileExistsError(tr("label.duplicate_file_exists"))
         root = self.library.library_root()
         if root is None:
-            raise ValueError("尚未设置作品目录")
+            raise ValueError(tr("label.library_root_unset"))
         backup_dir = task.directory / "rollback"
         backup_dir.mkdir()
         installed: list[Path] = []
@@ -139,7 +145,7 @@ class UploadService:
                     assert item.kind is not None
                     relative = item.source.name
                     if item.kind == "illustration":
-                        relative = f"插画/{item.source.name}"
+                        relative = f"{ILLUSTRATION_DIRECTORY}/{item.source.name}"
                     target = root / Path(relative)
                     target.parent.mkdir(exist_ok=True)
                     existing = session.scalar(select(Work).where(Work.relative_path == relative))
@@ -155,7 +161,7 @@ class UploadService:
                     fingerprint = file_fingerprint(target)
                     tags = list(session.scalars(select(Tag).where(Tag.id.in_(item.tag_ids))))
                     if len(tags) != len(item.tag_ids):
-                        raise ValueError("上传资料包含不存在的 Tag")
+                        raise ValueError(tr("error.upload_tag_not_found"))
                     if existing is None:
                         existing = Work(relative_path=relative)
                         session.add(existing)

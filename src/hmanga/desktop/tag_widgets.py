@@ -1,16 +1,12 @@
 from html import escape
 
-TAG_PREFIX_COLOR = "#b98c99"
-TAG_CHIP_PREFIX_COLOR = "#c8b9be"
 AUTHOR_TAG_COLOR = "#b89a58"
 
 
 def tag_sort_category(display_name: str, font_metrics, *, author: bool = False) -> int:
-    """Order author Tags, prefixed Tags, plain long Tags, then short Tags."""
+    """Order author Tags, plain long Tags, then short Tags."""
     if author:
         return 0
-    if "：" in display_name:
-        return 1
     return 2 if font_metrics.horizontalAdvance(display_name) + 26 > 78 else 3
 
 
@@ -19,11 +15,4 @@ def is_long_tag_category(category: int) -> bool:
 
 
 def tag_chip_text(display_name: str) -> str:
-    """Return rich text that distinguishes an optional group prefix."""
-    prefix, separator, name = display_name.partition("：")
-    if not separator:
-        return escape(display_name)
-    return (
-        f'<span style="color:{TAG_CHIP_PREFIX_COLOR}">{escape(prefix + separator)}</span>'
-        f'<span style="color:white">{escape(name)}</span>'
-    )
+    return escape(display_name)

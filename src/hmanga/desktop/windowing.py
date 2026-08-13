@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QObject, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QPoint, QPropertyAnimation, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QCursor, QGuiApplication, QMouseEvent, QShowEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -55,6 +55,8 @@ class FloatingCardDialog(QDialog):
     ) -> None:
         self._overlay_parent = parent
         self._preferred_card_size = card_size or QSize(560, 520)
+        self.warning_shake = False
+        self._shake_animation: QPropertyAnimation | None = None
         super().__init__(parent)
         if parent is not None:
             parent.installEventFilter(self)
@@ -63,8 +65,7 @@ class FloatingCardDialog(QDialog):
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setObjectName("floatingCardOverlay")
         self.setStyleSheet(
-            "QDialog#floatingCardOverlay { "
-            f"background-color: rgba(0, 0, 0, {backdrop_alpha}); }}"
+            f"QDialog#floatingCardOverlay {{ background-color: rgba(0, 0, 0, {backdrop_alpha}); }}"
         )
 
         overlay = QVBoxLayout(self)
@@ -73,8 +74,10 @@ class FloatingCardDialog(QDialog):
         self.card.setObjectName("floatingCard")
         self.card.setFixedSize(self._preferred_card_size)
         self.card.setStyleSheet(
-            "QFrame#floatingCard { background: palette(base); "
-            "border: 1px solid palette(mid); border-radius: 22px; }"
+            # Do not use palette(base) here: under a Qt stylesheet it can still
+            # be the operating system's grey palette.  Let the card inherit the
+            # same application background as all of its child widgets.
+            "QFrame#floatingCard { border: 1px solid #57474f; border-radius: 22px; }"
         )
         shadow = QGraphicsDropShadowEffect(self.card)
         shadow.setBlurRadius(36)
@@ -88,6 +91,26 @@ class FloatingCardDialog(QDialog):
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
         super().showEvent(event)
         self._sync_to_parent()
+        if self.warning_shake:
+            QTimer.singleShot(40, self._start_warning_shake)
+
+    def _start_warning_shake(self) -> None:
+        origin = self.card.pos()
+        animation = QPropertyAnimation(self.card, b"pos", self)
+        animation.setDuration(360)
+        for progress, offset in (
+            (0.0, 0),
+            (0.14, -11),
+            (0.28, 10),
+            (0.43, -8),
+            (0.58, 7),
+            (0.73, -4),
+            (0.86, 3),
+            (1.0, 0),
+        ):
+            animation.setKeyValueAt(progress, origin + QPoint(offset, 0))
+        animation.start()
+        self._shake_animation = animation
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)

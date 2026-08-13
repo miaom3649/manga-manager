@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import pytest
 
 from hmanga.catalog import CatalogQuery, CatalogService
-from hmanga.database import Database, Work
+from hmanga.database import Database, Tag, TagGroup, Work, WorkTag
 from hmanga.text import normalize_text
 
 
@@ -64,46 +64,69 @@ def test_explicitly_deselecting_both_system_tags_returns_no_works(database: Data
 
 def test_tag_duplicate_display_uses_group_prefix(database: Database) -> None:
     catalog = CatalogService(database)
-    author = catalog.create_group("原作")
-    category = catalog.create_group("类别")
+    author, category = catalog.list_groups()
     catalog.create_tag("青山", author.id)
     catalog.create_tag("青山", category.id)
 
     tags = catalog.list_tags()
 
-    assert [catalog.tag_display_name(tag, tags) for tag in tags] == ["原作：青山", "类别：青山"]
+    assert [catalog.tag_display_name(tag, tags) for tag in tags] == ["青山", "青山"]
 
 
-def test_tag_and_group_names_are_limited_to_five_characters(database: Database) -> None:
+def test_same_tag_name_can_exist_in_author_and_category(database: Database) -> None:
     catalog = CatalogService(database)
-    group = catalog.create_group("一二三四五")
-    tag = catalog.create_tag("abcde", group.id)
+    author, category = catalog.list_groups()
 
-    with pytest.raises(ValueError, match="最多 5 个字符"):
-        catalog.create_group("一二三四五六")
+    category_tag = catalog.create_tag("a", category.id)
+    author_tag = catalog.create_tag("a", author.id)
+
+    assert category_tag.id != author_tag.id
+    assert [tag.name for tag in catalog.list_tags()] == ["a", "a"]
+
+
+def test_category_tag_names_are_limited_to_five_characters(database: Database) -> None:
+    catalog = CatalogService(database)
+    tag = catalog.create_tag("abcde")
+
+    with pytest.raises(ValueError, match="只能使用系统分组"):
+        catalog.create_group("新分组")
     with pytest.raises(ValueError, match="最多 5 个字符"):
         catalog.create_tag("abcdef")
-    with pytest.raises(ValueError, match="最多 5 个字符"):
-        catalog.rename_group(group.id, "一二三四五六")
     with pytest.raises(ValueError, match="最多 5 个字符"):
         catalog.rename_tag(tag.id, "abcdef")
 
 
-def test_move_and_delete_group_rules(database: Database) -> None:
+def test_only_fixed_groups_are_available(database: Database) -> None:
     catalog = CatalogService(database)
-    group = catalog.create_group("系列")
-    tag = catalog.create_tag("青山", group.id)
-    catalog.rename_tag(tag.id, "青山刚昌")
+    author, category = catalog.list_groups()
+    tag = catalog.create_tag("恋爱")
+    assert tag.group_id == category.id
+    catalog.move_tag(tag.id, author.id)
+    assert catalog.list_tags()[0].group_id == author.id
     catalog.move_tag(tag.id, None)
-    assert catalog.list_tags()[0].group is None
-    catalog.move_tag(tag.id, group.id)
-    catalog.delete_group(group.id, delete_tags=False)
-    assert catalog.list_tags()[0].group is None
+    assert catalog.list_tags()[0].group_id == category.id
+    for group in (author, category):
+        with pytest.raises(ValueError, match="不能改名"):
+            catalog.rename_group(group.id, "新名")
+        with pytest.raises(ValueError, match="不能删除"):
+            catalog.delete_group(group.id, delete_tags=False)
 
-    second = catalog.create_group("类别")
-    second_tag = catalog.create_tag("恋爱", second.id)
-    catalog.delete_group(second.id, delete_tags=True)
-    assert all(item.id != second_tag.id for item in catalog.list_tags())
+
+def test_edit_tag_updates_name_and_group_atomically(database: Database) -> None:
+    catalog = CatalogService(database)
+    author, category = catalog.list_groups()
+    tag = catalog.create_tag("恋爱", category.id)
+
+    catalog.edit_tag(tag.id, "很长的作者名称", author.id)
+
+    updated = catalog.list_tags()[0]
+    assert updated.name == "很长的作者名称"
+    assert updated.group_id == author.id
+    with pytest.raises(ValueError, match="最多 5 个字符"):
+        catalog.edit_tag(tag.id, updated.name, category.id)
+    unchanged = catalog.list_tags()[0]
+    assert unchanged.name == "很长的作者名称"
+    assert unchanged.group_id == author.id
 
 
 def test_author_system_group_rules(database: Database) -> None:
@@ -125,8 +148,7 @@ def test_author_system_group_rules(database: Database) -> None:
 def test_reset_custom_metadata_keeps_media_and_author_group(database: Database) -> None:
     catalog = CatalogService(database)
     work_id = add_work(database, "123.zip", "自定义标题")
-    custom_group = catalog.create_group("类别")
-    tag = catalog.create_tag("恋爱", custom_group.id)
+    tag = catalog.create_tag("恋爱")
     catalog.update_work(
         work_id,
         title="修改标题",
@@ -144,4 +166,118 @@ def test_reset_custom_metadata_keeps_media_and_author_group(database: Database) 
     assert work.rating == 3
     assert work.cover_member == "002.webp"
     assert catalog.list_tags() == []
-    assert [group.name for group in catalog.list_groups()] == ["作者"]
+    assert [group.name for group in catalog.list_groups()] == ["作者", "类别"]
+
+
+def test_text_search_unions_title_tag_and_group_matches(database: Database) -> None:
+    catalog = CatalogService(database)
+    author, category = catalog.list_groups()
+    title_match = add_work(database, "1.zip", "作者之夜")
+    tag_match = add_work(database, "2.zip", "其他")
+    group_match = add_work(database, "3.zip", "另一部")
+    unrelated = add_work(database, "4.zip", "无关")
+    category_named_author = catalog.create_tag("作者", category.id)
+    actual_author = catalog.create_tag("青山刚昌", author.id)
+    catalog.update_work(
+        tag_match,
+        title="其他",
+        rating=0,
+        tag_ids=[category_named_author.id],
+        cover_member=None,
+    )
+    catalog.update_work(
+        group_match,
+        title="另一部",
+        rating=0,
+        tag_ids=[actual_author.id],
+        cover_member=None,
+    )
+
+    result = catalog.query(CatalogQuery(text="作者"))
+
+    assert {work.id for work in result.items} == {title_match, tag_match, group_match}
+    assert unrelated not in {work.id for work in result.items}
+
+
+def test_legacy_groups_and_ungrouped_tags_merge_into_category(database: Database) -> None:
+    first = add_work(database, "1.zip", "一")
+    second = add_work(database, "2.zip", "二")
+    with database.session() as session:
+        legacy_group = TagGroup(name="旧分组", normalized_name=normalize_text("旧分组"))
+        session.add(legacy_group)
+        session.flush()
+        grouped = Tag(
+            name="恋爱",
+            normalized_name=normalize_text("恋爱"),
+            group_id=legacy_group.id,
+            group_key=legacy_group.id,
+        )
+        ungrouped = Tag(
+            name="恋爱",
+            normalized_name=normalize_text("恋爱"),
+            group_id=None,
+            group_key=0,
+        )
+        session.add_all([grouped, ungrouped])
+        session.flush()
+        session.add_all(
+            [
+                WorkTag(work_id=first, tag_id=grouped.id),
+                WorkTag(work_id=second, tag_id=ungrouped.id),
+            ]
+        )
+
+    catalog = CatalogService(database)
+
+    tags = catalog.list_tags()
+    assert len(tags) == 1
+    assert tags[0].group is not None and tags[0].group.name == "类别"
+    assert {work.id for work in tags[0].works} == {first, second}
+    assert [group.name for group in catalog.list_groups()] == ["作者", "类别"]
+
+
+def test_catalog_revision_changes_after_shared_metadata_edits(database: Database) -> None:
+    catalog = CatalogService(database)
+    work_id = add_work(database, "123.zip", "作品")
+    initial = catalog.revision
+    tag = catalog.create_tag("测试")
+    assert catalog.revision > initial
+    after_tag = catalog.revision
+
+    catalog.update_work(
+        work_id,
+        title="新标题",
+        rating=1,
+        tag_ids=[tag.id],
+        cover_member=None,
+    )
+
+    assert catalog.revision > after_tag
+
+
+def test_catalog_revision_can_publish_library_scan_changes(database: Database) -> None:
+    catalog = CatalogService(database)
+    revision = catalog.revision
+
+    catalog.notify_library_changed()
+
+    assert catalog.revision == revision + 1
+
+
+def test_delete_work_removes_its_database_record(database: Database) -> None:
+    catalog = CatalogService(database)
+    work_id = add_work(database, "123.zip", "作品")
+    tag = catalog.create_tag("测试")
+    catalog.update_work(
+        work_id,
+        title="作品",
+        rating=1,
+        tag_ids=[tag.id],
+        cover_member=None,
+    )
+    revision = catalog.revision
+
+    catalog.delete_work(work_id)
+
+    assert catalog.get_work(work_id) is None
+    assert catalog.revision > revision

@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from sqlalchemy import delete, select
 
 from hmanga.database import Database, Device, DevicePreference
+from hmanga.i18n import tr
 
 
 def token_hash(token: str) -> str:
@@ -51,11 +52,11 @@ class PairingService:
         with self._lock:
             attempts = self._failed_attempts.get(client, 0)
             if attempts >= 10:
-                raise PermissionError("尝试次数过多，请重新打开配对页面")
+                raise PermissionError(tr("message.too_many_pairing_attempts"))
             session = self._session
             if session is None or not secrets.compare_digest(session.code, code):
                 self._failed_attempts[client] = attempts + 1
-                raise PermissionError("配对码无效")
+                raise PermissionError(tr("error.invalid_pairing_code"))
             # Each successful pairing rotates the short code immediately. The
             # open desktop card notices this session change and redraws its QR.
             self._session = self._new_session()
@@ -65,7 +66,7 @@ class PairingService:
             database_session.add(
                 Device(
                     id=uuid.uuid4().hex,
-                    name=name.strip() or "未命名设备",
+                    name=name.strip() or tr("label.unnamed_device"),
                     user_agent=user_agent[:1000],
                     token_hash=token_hash(token),
                 )
@@ -79,8 +80,21 @@ class PairingService:
             device = session.scalar(select(Device).where(Device.token_hash == token_hash(token)))
             if device is None or device.revoked_at is not None:
                 return None
-            device.last_seen_at = datetime.now(UTC)
+            now = datetime.now(UTC)
+            last_seen = device.last_seen_at
+            if last_seen.tzinfo is None:
+                last_seen = last_seen.replace(tzinfo=UTC)
+            elapsed = max(0, int((now - last_seen).total_seconds()))
+            # The phone checks in at least once per second while connected.
+            # Longer gaps are offline time and must not inflate the total.
+            if elapsed <= 10:
+                device.total_connected_seconds += elapsed
+            device.last_seen_at = now
             return device
+
+    def device(self, device_id: str) -> Device | None:
+        with self.database.session() as session:
+            return session.get(Device, device_id)
 
     def devices(self) -> list[Device]:
         with self.database.session() as session:
@@ -96,7 +110,9 @@ class PairingService:
         with self.database.session() as session:
             device = session.get(Device, device_id)
             if device is not None:
-                session.execute(delete(DevicePreference).where(DevicePreference.device_id == device_id))
+                session.execute(
+                    delete(DevicePreference).where(DevicePreference.device_id == device_id)
+                )
                 session.delete(device)
 
     def revoke_token(self, token: str) -> None:

@@ -9,16 +9,17 @@ from types import SimpleNamespace
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PIL import Image
-from PySide6.QtCore import QPoint, QSize, Qt
+from PySide6.QtCore import QPoint, QSize, Qt, QTimer
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 
 from hmanga.appearance import AppearanceService
 from hmanga.backup import BackupService
 from hmanga.cache import CacheService
 from hmanga.catalog import CatalogQuery, CatalogService
 from hmanga.controller import LibraryController
-from hmanga.database import Database
+from hmanga.database import Database, Notification
+from hmanga.desktop.dialogs import DeleteWorkDialog, WorkDetailDialog
 from hmanga.desktop.main_window import MainWindow, TagSummaryWidget
 from hmanga.desktop.reader_dialog import ReaderDialog
 from hmanga.desktop.tag_widgets import AUTHOR_TAG_COLOR
@@ -63,14 +64,14 @@ def test_full_desktop_window_constructs(tmp_path) -> None:
     database.initialize("test")
     library = LibraryService(database)
     root = library.configure_root(tmp_path / "library")
-    Image.new("RGB", (12, 18), "navy").save(root / "插画" / "149672.png")
+    Image.new("RGB", (12, 18), "navy").save(root / "illustration" / "149672.png")
     library.scan()
     media = MediaService(library, tmp_path / "cache")
     catalog = CatalogService(database)
     author_group = catalog.list_groups()[0]
     author_tag = catalog.create_tag("很长的作者名称", author_group.id)
     second_author_tag = catalog.create_tag("另一位作者", author_group.id)
-    catalog.create_tag("普通")
+    ordinary_tag = catalog.create_tag("普通")
     illustration = catalog.query(CatalogQuery(kinds=("illustration",))).items[0]
     catalog.update_work(
         illustration.id,
@@ -79,6 +80,8 @@ def test_full_desktop_window_constructs(tmp_path) -> None:
         tag_ids=[author_tag.id],
         cover_member=illustration.cover_member,
     )
+    with database.session() as session:
+        session.add(Notification(kind="test", title="可见通知", details_json="[]"))
     controller = LibraryController(library)
     window = MainWindow(
         controller,
@@ -95,6 +98,30 @@ def test_full_desktop_window_constructs(tmp_path) -> None:
     )
     window.show()
     app.processEvents()
+    QTest.qWait(20)
+    assert any(
+        window.notification_list.item(index).data(Qt.UserRole) is not None
+        for index in range(window.notification_list.count())
+    )
+    assert any(
+        window.notification_list.item(index).data(Qt.UserRole) is None
+        for index in range(window.notification_list.count())
+    )
+
+    detail = WorkDetailDialog(illustration.id, catalog, media, window)
+    detail.show()
+    app.processEvents()
+    assert not any(label.text() == "普通" for label in detail.findChildren(QLabel))
+    catalog.update_work(
+        illustration.id,
+        title=illustration.title or "",
+        rating=illustration.rating,
+        tag_ids=[author_tag.id, ordinary_tag.id],
+        cover_member=illustration.cover_member,
+    )
+    QTest.qWait(600)
+    assert any(label.text() == "普通" for label in detail.findChildren(QLabel))
+    detail.close()
     assert all(
         button.property("tagId") not in {author_tag.id, second_author_tag.id}
         for button in window.custom_tag_buttons
@@ -116,16 +143,13 @@ def test_full_desktop_window_constructs(tmp_path) -> None:
         if button.property("tagLayoutClass") == "author"
     ] == [author_tag.id]
     visible_author = next(
-        button
-        for button in window.custom_tag_buttons
-        if button.property("tagId") == author_tag.id
+        button for button in window.custom_tag_buttons if button.property("tagId") == author_tag.id
     )
     visible_author.click()
     app.processEvents()
     assert not visible_author.isVisible()
     assert all(
-        button.property("tagLayoutClass") != "author"
-        for button in window.custom_tag_buttons
+        button.property("tagLayoutClass") != "author" for button in window.custom_tag_buttons
     )
     window.illustration_filter.click()
     app.processEvents()
@@ -134,6 +158,8 @@ def test_full_desktop_window_constructs(tmp_path) -> None:
     assert window.brand_button.text() == "HManガ"
     assert window.notification_button.size() == QSize(44, 44)
     assert window.settings_button.size() == QSize(44, 44)
+    assert window.close_button.size() == QSize(44, 44)
+    assert window.windowFlags() & Qt.FramelessWindowHint
     assert window.work_list.count() == 1
     assert window.work_list.item(0).text() == ""
     assert window.work_list.itemWidget(window.work_list.item(0)) is not None
@@ -202,7 +228,7 @@ def test_desktop_kind_filters_match_their_visible_selection(tmp_path) -> None:
     Image.new("RGB", (12, 18), "navy").save(image, "WEBP")
     with zipfile.ZipFile(root / "123456.zip", "w") as archive:
         archive.writestr("00001.webp", image.getvalue())
-    Image.new("RGB", (12, 18), "green").save(root / "插画" / "picture.png")
+    Image.new("RGB", (12, 18), "green").save(root / "illustration" / "picture.png")
     library.scan()
     catalog = CatalogService(database)
     controller = LibraryController(library)
@@ -252,6 +278,55 @@ def test_desktop_kind_filters_match_their_visible_selection(tmp_path) -> None:
     assert window.illustration_filter.text() == "插画"
     assert window.work_list.count() == 1
 
+    window.close()
+    controller.stop()
+
+
+def test_confirming_work_deletion_keeps_desktop_alive(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    database = Database(tmp_path / "main.db")
+    database.initialize("test")
+    library = LibraryService(database)
+    root = library.configure_root(tmp_path / "library")
+    image_path = root / "illustration" / "delete-me.png"
+    Image.new("RGB", (12, 18), "navy").save(image_path)
+    library.scan()
+    catalog = CatalogService(database)
+    media = MediaService(library, tmp_path / "cache")
+    controller = LibraryController(library)
+    window = MainWindow(
+        controller,
+        library,
+        catalog,
+        media,
+        UploadService(database, library, tmp_path / "cache"),
+        PairingService(database),
+        BackupService(database, library),
+        MigrationService(database, library),
+        CacheService(database, tmp_path / "cache"),
+        NotificationService(database),
+        AppearanceService(database),
+    )
+    work = catalog.query(CatalogQuery(kinds=("illustration",))).items[0]
+    window.show()
+    app.processEvents()
+
+    def confirm_from_detail() -> None:
+        detail = window.findChild(WorkDetailDialog)
+        assert detail is not None
+        QTimer.singleShot(
+            0,
+            lambda: detail.findChild(DeleteWorkDialog).accept(),
+        )
+        detail.delete_work()
+
+    QTimer.singleShot(0, confirm_from_detail)
+    window.show_work_detail(work.id)
+    app.processEvents()
+
+    assert not image_path.exists()
+    assert catalog.get_work(work.id) is None
+    assert not window.isHidden()
     window.close()
     controller.stop()
 

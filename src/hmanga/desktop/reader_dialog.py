@@ -3,7 +3,7 @@ from __future__ import annotations
 from io import BytesIO
 
 from PIL import Image
-from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, Qt, QTimer
+from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, Qt, QTimer, Signal
 from PySide6.QtGui import QCursor, QImage, QKeyEvent, QMouseEvent, QPixmap, QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from hmanga.database import Work
 from hmanga.desktop.windowing import ScreenCenteredDialog
+from hmanga.i18n import tr, trf
 from hmanga.reader import ReaderService
 
 
@@ -30,21 +31,29 @@ def pixmap_from_bytes(data: bytes) -> QPixmap:
 
 
 class PanLabel(QLabel):
+    clicked = Signal()
+
     def __init__(self, scroll: QScrollArea) -> None:
         super().__init__()
         self.scroll = scroll
         self.last_position: QPoint | None = None
+        self.press_position: QPoint | None = None
+        self.dragged = False
         self.setCursor(Qt.OpenHandCursor)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         if event.button() == Qt.LeftButton:
             self.last_position = event.globalPosition().toPoint()
+            self.press_position = self.last_position
+            self.dragged = False
             self.setCursor(Qt.ClosedHandCursor)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         if self.last_position is None:
             return
         current = event.globalPosition().toPoint()
+        if self.press_position is not None:
+            self.dragged = (current - self.press_position).manhattanLength() > 5
         delta = current - self.last_position
         self.scroll.horizontalScrollBar().setValue(
             self.scroll.horizontalScrollBar().value() - delta.x()
@@ -55,8 +64,13 @@ class PanLabel(QLabel):
         self.last_position = current
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        clicked = event.button() == Qt.LeftButton and not self.dragged
         self.last_position = None
+        self.press_position = None
+        self.dragged = False
         self.setCursor(Qt.OpenHandCursor)
+        if clicked:
+            self.clicked.emit()
 
 
 class ReaderTitleBar(QWidget):
@@ -130,7 +144,7 @@ class ReaderDialog(ScreenCenteredDialog):
         title_layout.setContentsMargins(12, 8, 12, 8)
         back = QPushButton("←")
         back.setObjectName("readerBackBlock")
-        back.setToolTip("返回详情")
+        back.setToolTip(tr("action.back_to_detail"))
         back.setFixedSize(46, 42)
         back.clicked.connect(self.accept)
         title = QLabel(work.title or work.file_name.rsplit(".", 1)[0])
@@ -151,11 +165,11 @@ class ReaderDialog(ScreenCenteredDialog):
         self.toolbar_bar.setFixedHeight(self.TOOLBAR_HEIGHT)
         self.toolbar_bar.setStyleSheet(
             "QWidget#readerToolbarBar { background: transparent; border: none; } "
-            "QLabel#readerInfoBlock, QPushButton[readerBlock=\"true\"], "
+            'QLabel#readerInfoBlock, QPushButton[readerBlock="true"], '
             "QSpinBox#readerJumpBlock { "
             "background: rgba(17, 17, 17, 150); color: white; border: none; "
             "border-radius: 10px; padding: 0 12px; } "
-            "QPushButton[readerBlock=\"true\"]:hover, "
+            'QPushButton[readerBlock="true"]:hover, '
             "QSpinBox#readerJumpBlock:hover, QSpinBox#readerJumpBlock:focus { "
             "background: rgba(17, 17, 17, 205); color: white; border: none; } "
         )
@@ -182,7 +196,7 @@ class ReaderDialog(ScreenCenteredDialog):
         larger.setProperty("readerBlock", True)
         larger.setFixedSize(44, 40)
         larger.clicked.connect(lambda: self.change_zoom(1.1))
-        fit = QPushButton("适配大小")
+        fit = QPushButton(tr("label.fit_to_size"))
         fit.setProperty("readerBlock", True)
         fit.setMinimumSize(112, 40)
         fit.clicked.connect(self.fit_size)
@@ -207,7 +221,9 @@ class ReaderDialog(ScreenCenteredDialog):
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.viewport().installEventFilter(self)
+        self._content_press_position: QPoint | None = None
         self.image = PanLabel(self.scroll)
+        self.image.clicked.connect(self._toggle_chrome_from_content)
         self.image.setAlignment(Qt.AlignCenter)
         self.scroll.setWidget(self.image)
         self.scroll.verticalScrollBar().valueChanged.connect(self.continuous_scrolled)
@@ -228,7 +244,7 @@ class ReaderDialog(ScreenCenteredDialog):
         self.proximity_timer.timeout.connect(self._check_panel_proximity)
         self.proximity_timer.start()
         self.chrome_hide_timer.start()
-        self.resume = QPushButton("回到上次观看位置", self)
+        self.resume = QPushButton(tr("label.resume_last_position"), self)
         self.resume.setStyleSheet(
             "QPushButton { background: rgba(17, 17, 17, 150); color: white; "
             "border: none; border-radius: 10px; padding: 8px 14px; } "
@@ -268,13 +284,13 @@ class ReaderDialog(ScreenCenteredDialog):
 
     def render(self) -> None:
         if not self.members:
-            self.image.setText("压缩包内没有可读取的图片")
+            self.image.setText(tr("label.archive_has_no_readable_images"))
             return
         try:
             data = self.reader.page(self.work, self.members[self.page_index])
             pixmap = pixmap_from_bytes(data)
         except Exception as exc:
-            self.image.setText(f"第 {self.page_index + 1} 页无法读取：{exc}")
+            self.image.setText(trf("reader.page_unreadable", page=self.page_index + 1, error=exc))
             self.position.setText(f"{self.page_index + 1}/{len(self.members)}")
             return
         pixmap = self._scaled_to_viewport(pixmap)
@@ -282,7 +298,11 @@ class ReaderDialog(ScreenCenteredDialog):
         self._update_position_controls()
 
     def _update_mode_button_text(self) -> None:
-        self.mode.setText("纵向连续" if self.active_mode == "continuous" else "单页阅读")
+        self.mode.setText(
+            tr("label.vertical_continuous")
+            if self.active_mode == "continuous"
+            else tr("label.single_page_reading")
+        )
 
     def toggle_mode(self) -> None:
         next_mode = "single" if self.active_mode == "continuous" else "continuous"
@@ -300,6 +320,7 @@ class ReaderDialog(ScreenCenteredDialog):
         else:
             self.scroll.takeWidget()
             self.image = PanLabel(self.scroll)
+            self.image.clicked.connect(self._toggle_chrome_from_content)
             self.image.setAlignment(Qt.AlignCenter)
             self.scroll.setWidget(self.image)
             self.render()
@@ -313,7 +334,8 @@ class ReaderDialog(ScreenCenteredDialog):
         self.continuous_labels = []
         for index, member in enumerate(self.members):
             label = PanLabel(self.scroll)
-            label.setText(f"正在准备第 {index + 1} 页 · {member}")
+            label.clicked.connect(self._toggle_chrome_from_content)
+            label.setText(trf("reader.preparing_page", page=index + 1, member=member))
             label.setAlignment(Qt.AlignCenter)
             label.setMinimumHeight(700)
             label.setProperty("page_index", index)
@@ -353,10 +375,10 @@ class ReaderDialog(ScreenCenteredDialog):
                     label.setFixedHeight(pixmap.height())
                     label.setProperty("loaded", True)
                 except Exception as exc:
-                    label.setText(f"第 {index + 1} 页读取失败：{exc}")
+                    label.setText(trf("reader.page_failed", page=index + 1, error=exc))
             elif not visible_nearby and label.property("loaded"):
                 label.clear()
-                label.setText(f"第 {int(label.property('page_index')) + 1} 页")
+                label.setText(trf("reader.page_number", page=int(label.property("page_index")) + 1))
                 label.setFixedHeight(700)
                 label.setProperty("loaded", False)
         self.page_index = self._detect_continuous_page()
@@ -459,6 +481,15 @@ class ReaderDialog(ScreenCenteredDialog):
         self._animate_panel("title", visible)
         self._animate_panel("toolbar", visible)
 
+    def _toggle_chrome_from_content(self) -> None:
+        self.scroll.setFocus()
+        if self._chrome_visible:
+            self.chrome_hide_timer.stop()
+            self._animate_chrome(False)
+        else:
+            self._animate_chrome(True)
+            self.chrome_hide_timer.start()
+
     def _layout_chrome(self) -> None:
         if hasattr(self, "title_animation"):
             self.title_animation.stop()
@@ -501,6 +532,17 @@ class ReaderDialog(ScreenCenteredDialog):
             self.chrome_hide_timer.start()
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        if watched is self.scroll.viewport() and event.type() == QEvent.Type.MouseButtonPress:
+            if event.button() == Qt.LeftButton:
+                self._content_press_position = event.position().toPoint()
+        if watched is self.scroll.viewport() and event.type() == QEvent.Type.MouseButtonRelease:
+            if event.button() == Qt.LeftButton and self._content_press_position is not None:
+                distance = (
+                    event.position().toPoint() - self._content_press_position
+                ).manhattanLength()
+                self._content_press_position = None
+                if distance <= 5:
+                    self._toggle_chrome_from_content()
         if watched is self.scroll.viewport() and event.type() == QEvent.Type.Wheel:
             if self.active_mode == "single":
                 delta = event.angleDelta().y() or event.pixelDelta().y()

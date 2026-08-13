@@ -14,9 +14,7 @@ def test_settings_create_directories(tmp_path: Path) -> None:
     assert settings.cache_dir.is_dir()
 
 
-def test_legacy_data_directory_and_database_are_migrated(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_legacy_data_directory_and_database_are_migrated(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     legacy_dir = tmp_path / "HLibrary"
     legacy_dir.mkdir()

@@ -7,6 +7,8 @@ from pathlib import Path
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
+from hmanga.library import ILLUSTRATION_DIRECTORY
+
 
 class _DebouncedHandler(FileSystemEventHandler):
     def __init__(self, callback: Callable[[], None], delay: float) -> None:
@@ -46,7 +48,7 @@ class LibraryWatcher:
         self.stop()
         observer = Observer()
         observer.schedule(self._handler, str(root), recursive=False)
-        illustration_root = root / "插画"
+        illustration_root = root / ILLUSTRATION_DIRECTORY
         if illustration_root.is_dir():
             observer.schedule(self._handler, str(illustration_root), recursive=False)
         observer.start()

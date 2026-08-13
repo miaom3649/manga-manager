@@ -3,12 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from hmanga import __version__
 from hmanga.catalog import CatalogQuery, CatalogService
+from hmanga.i18n import tr, trf
 from hmanga.library import LibraryService
 from hmanga.media import MediaService
 from hmanga.pairing import PairingService
@@ -16,7 +17,7 @@ from hmanga.pairing import PairingService
 
 class PairRequest(BaseModel):
     code: str = Field(min_length=6, max_length=6)
-    name: str = Field(default="我的设备", max_length=200)
+    name: str = Field(default=tr("label.my_device"), max_length=200)
 
 
 class WorkUpdate(BaseModel):
@@ -52,7 +53,7 @@ def create_api(
     media: MediaService | None = None,
     pairing: PairingService | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="HManガ局域网服务", version=__version__)
+    app = FastAPI(title=tr("label.lan_service"), version=__version__)
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
@@ -72,12 +73,22 @@ def create_api(
             else ""
         )
         if pairing.authenticate(token) is None:
-            raise HTTPException(401, "设备尚未配对")
+            raise HTTPException(401, tr("label.device_not_paired"))
+
+    @app.get("/api/state")
+    def shared_state(authorization: str | None = Header(None)) -> dict[str, int]:
+        authorize(authorization)
+        unread = 0
+        if catalog:
+            from hmanga.notifications import NotificationService
+
+            unread = NotificationService(catalog.database).unread_count()
+        return {"revision": catalog.revision if catalog else 0, "unread": unread}
 
     @app.post("/api/pair")
     def pair(payload: PairRequest, request: Request) -> dict[str, str]:
         if pairing is None:
-            raise HTTPException(503, "配对服务尚未启用")
+            raise HTTPException(503, tr("label.pairing_service_unavailable"))
         try:
             token = pairing.pair(
                 payload.code,
@@ -137,9 +148,9 @@ def create_api(
             items = library.list_works() if library else []
             total, current_page, pages = len(items), 1, 1
         else:
-            requested_kinds = tuple(
-                value for value in (kinds or "").split(",") if value
-            ) or ("comic",)
+            requested_kinds = tuple(value for value in (kinds or "").split(",") if value) or (
+                "comic",
+            )
             result = catalog.query(
                 CatalogQuery(
                     text=text,
@@ -189,23 +200,23 @@ def create_api(
     def thumbnail(work_id: int, authorization: str | None = Header(None)):
         authorize(authorization)
         if catalog is None or media is None:
-            raise HTTPException(503, "媒体服务尚未启用")
+            raise HTTPException(503, tr("label.media_service_unavailable"))
         work = catalog.get_work(work_id)
         if work is None:
-            raise HTTPException(404, "作品不存在")
+            raise HTTPException(404, tr("error.work_not_found"))
         try:
             return FileResponse(media.thumbnail(work))
         except (OSError, KeyError) as exc:
-            raise HTTPException(422, f"封面无法读取：{exc}") from exc
+            raise HTTPException(422, trf("error.cover_read", error=exc)) from exc
 
     @app.get("/api/works/{work_id}")
     def work_detail(work_id: int, authorization: str | None = Header(None)) -> dict[str, object]:
         authorize(authorization)
         if catalog is None:
-            raise HTTPException(503, "作品服务尚未启用")
+            raise HTTPException(503, tr("label.work_service_unavailable"))
         work = catalog.get_work(work_id)
         if work is None:
-            raise HTTPException(404, "作品不存在")
+            raise HTTPException(404, tr("error.work_not_found"))
         all_tags = catalog.list_tags()
         return {
             "id": work.id,
@@ -236,13 +247,13 @@ def create_api(
     ) -> dict[str, str]:
         authorize(authorization)
         if catalog is None:
-            raise HTTPException(503, "作品服务尚未启用")
+            raise HTTPException(503, tr("label.work_service_unavailable"))
         work = catalog.get_work(work_id)
         if work is None:
-            raise HTTPException(404, "作品不存在")
+            raise HTTPException(404, tr("error.work_not_found"))
         if work.kind == "comic" and payload.cover_member and media:
             if payload.cover_member not in media.comic_members(work):
-                raise HTTPException(422, "所选封面不存在")
+                raise HTTPException(422, tr("error.selected_cover_missing"))
         try:
             catalog.update_work(
                 work_id,
@@ -279,7 +290,7 @@ def create_api(
     ) -> dict[str, object]:
         authorize(authorization)
         if catalog is None:
-            raise HTTPException(503, "Tag 服务尚未启用")
+            raise HTTPException(503, tr("label.tag_service_unavailable"))
         try:
             tag = catalog.create_tag(payload.name, payload.group_id)
         except ValueError as exc:
@@ -301,7 +312,7 @@ def create_api(
                     "tags": len(group.tags),
                     "comics": comics,
                     "illustrations": illustrations,
-                    "system": catalog.is_author_group(group),
+                    "system": catalog.is_system_group(group),
                 }
             )
         return results
@@ -312,7 +323,7 @@ def create_api(
     ) -> dict[str, object]:
         authorize(authorization)
         if catalog is None:
-            raise HTTPException(503, "Tag 服务尚未启用")
+            raise HTTPException(503, tr("label.tag_service_unavailable"))
         try:
             group = catalog.create_group(payload.name)
         except ValueError as exc:
@@ -327,10 +338,9 @@ def create_api(
     ) -> dict[str, str]:
         authorize(authorization)
         if catalog is None:
-            raise HTTPException(503, "Tag 服务尚未启用")
+            raise HTTPException(503, tr("label.tag_service_unavailable"))
         try:
-            catalog.rename_tag(tag_id, payload.name)
-            catalog.move_tag(tag_id, payload.group_id)
+            catalog.edit_tag(tag_id, payload.name, payload.group_id)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         return {"status": "ok"}
@@ -339,7 +349,7 @@ def create_api(
     def remove_tag(tag_id: int, authorization: str | None = Header(None)) -> dict[str, int]:
         authorize(authorization)
         if catalog is None:
-            raise HTTPException(503, "Tag 服务尚未启用")
+            raise HTTPException(503, tr("label.tag_service_unavailable"))
         try:
             affected = catalog.delete_tag(tag_id)
         except ValueError as exc:
@@ -354,7 +364,7 @@ def create_api(
     ) -> dict[str, str]:
         authorize(authorization)
         if catalog is None:
-            raise HTTPException(503, "Tag 服务尚未启用")
+            raise HTTPException(503, tr("label.tag_service_unavailable"))
         try:
             catalog.rename_group(group_id, payload.name)
         except ValueError as exc:
@@ -369,7 +379,7 @@ def create_api(
     ) -> dict[str, int]:
         authorize(authorization)
         if catalog is None:
-            raise HTTPException(503, "Tag 服务尚未启用")
+            raise HTTPException(503, tr("label.tag_service_unavailable"))
         try:
             comics, illustrations = catalog.delete_group(group_id, delete_tags)
         except ValueError as exc:
@@ -380,10 +390,10 @@ def create_api(
     def pages(work_id: int, authorization: str | None = Header(None)) -> dict[str, object]:
         authorize(authorization)
         if catalog is None or media is None:
-            raise HTTPException(503, "媒体服务尚未启用")
+            raise HTTPException(503, tr("label.media_service_unavailable"))
         work = catalog.get_work(work_id)
         if work is None or work.kind != "comic":
-            raise HTTPException(404, "漫画不存在")
+            raise HTTPException(404, tr("error.comic_not_found"))
         return {"items": media.comic_members(work), "fingerprint": work.fingerprint}
 
     @app.get("/api/works/{work_id}/previews/{preview_index}")
@@ -394,13 +404,13 @@ def create_api(
     ):
         authorize(authorization)
         if catalog is None or media is None:
-            raise HTTPException(503, "媒体服务尚未启用")
+            raise HTTPException(503, tr("label.media_service_unavailable"))
         work = catalog.get_work(work_id)
         if work is None:
-            raise HTTPException(404, "作品不存在")
+            raise HTTPException(404, tr("error.work_not_found"))
         previews = media.preview_members(work)
         if preview_index < 0 or preview_index >= len(previews):
-            raise HTTPException(404, "预览图不存在")
+            raise HTTPException(404, tr("error.preview_not_found"))
         from fastapi.responses import Response
 
         return Response(media.read_original(work, previews[preview_index]), media_type="image/webp")
@@ -409,29 +419,57 @@ def create_api(
     def page_image(work_id: int, page_index: int, authorization: str | None = Header(None)):
         authorize(authorization)
         if catalog is None or media is None:
-            raise HTTPException(503, "媒体服务尚未启用")
+            raise HTTPException(503, tr("label.media_service_unavailable"))
         work = catalog.get_work(work_id)
         if work is None or work.kind != "comic":
-            raise HTTPException(404, "漫画不存在")
+            raise HTTPException(404, tr("error.comic_not_found"))
         members = media.comic_members(work)
         if page_index < 0 or page_index >= len(members):
-            raise HTTPException(404, "页码不存在")
+            raise HTTPException(404, tr("error.page_not_found"))
         try:
             data = media.read_original(work, members[page_index])
         except (OSError, KeyError) as exc:
-            raise HTTPException(422, f"页面无法读取：{exc}") from exc
+            raise HTTPException(422, trf("error.page_read", error=exc)) from exc
         from fastapi.responses import Response
 
         return Response(data, media_type="image/webp")
+
+    @app.delete("/api/works/{work_id}")
+    def delete_work(work_id: int, authorization: str | None = Header(None)) -> dict[str, str]:
+        authorize(authorization)
+        if library is None or catalog is None or media is None:
+            raise HTTPException(503, tr("label.work_service_unavailable"))
+        work = catalog.get_work(work_id)
+        if work is None:
+            raise HTTPException(404, tr("error.work_not_found"))
+        root = library.library_root()
+        if root is None:
+            raise HTTPException(409, tr("label.library_root_unset"))
+        root = root.resolve()
+        path = media.work_path(work).resolve()
+        if not path.is_relative_to(root):
+            raise HTTPException(403, tr("label.work_outside_library"))
+        if not path.is_file():
+            raise HTTPException(404, trf("error.file_missing", file_name=work.file_name))
+        try:
+            # Do not let an already-running directory scan commit a stale copy
+            # of this work after the phone has deleted it.
+            with library.operation_lock:
+                path.unlink()
+                catalog.delete_work(work.id)
+                media.clear_thumbnail_cache()
+        except OSError as exc:
+            raise HTTPException(409, trf("error.delete", error=exc)) from exc
+        return {"status": "ok"}
 
     @app.get("/api/works/{work_id}/progress")
     def get_progress(work_id: int, authorization: str | None = Header(None)) -> dict[str, object]:
         authorize(authorization)
         if catalog is None or media is None:
-            raise HTTPException(503, "阅读服务尚未启用")
+            raise HTTPException(503, tr("label.reader_service_unavailable"))
         work = catalog.get_work(work_id)
         if work is None:
-            raise HTTPException(404, "作品不存在")
+            raise HTTPException(404, tr("error.work_not_found"))
         from hmanga.reader import ReaderService
 
         value = ReaderService(catalog.database, media).progress(work)
@@ -450,12 +488,12 @@ def create_api(
     ) -> dict[str, str]:
         authorize(authorization)
         if catalog is None or media is None:
-            raise HTTPException(503, "阅读服务尚未启用")
+            raise HTTPException(503, tr("label.reader_service_unavailable"))
         work = catalog.get_work(work_id)
         if work is None:
-            raise HTTPException(404, "作品不存在")
+            raise HTTPException(404, tr("error.work_not_found"))
         if payload.fingerprint != (work.fingerprint or ""):
-            raise HTTPException(409, "作品内容已被替换，旧阅读进度不能同步")
+            raise HTTPException(409, tr("message.replacement_progress_not_synced"))
         from hmanga.reader import ReaderService
 
         current = ReaderService(catalog.database, media).progress(work)
@@ -519,7 +557,7 @@ def create_api(
     ) -> dict[str, str]:
         authorize(authorization)
         if library is None:
-            raise HTTPException(503, "作品服务尚未启用")
+            raise HTTPException(503, tr("label.work_service_unavailable"))
         try:
             library.resolve_replacement(work_id, preserve_metadata)
         except ValueError as exc:
@@ -546,28 +584,6 @@ def create_api(
             NotificationService(catalog.database).delete(notification_id)
         return {"status": "ok"}
 
-    @app.get("/api/events")
-    async def events(request: Request, authorization: str | None = Header(None)):
-        authorize(authorization)
-
-        async def stream():
-            import asyncio
-            import json
-
-            last_count = -1
-            while not await request.is_disconnected():
-                count = 0
-                if catalog:
-                    from hmanga.notifications import NotificationService
-
-                    count = NotificationService(catalog.database).unread_count()
-                if count != last_count:
-                    yield f"event: notifications\ndata: {json.dumps({'unread': count})}\n\n"
-                    last_count = count
-                await asyncio.sleep(2)
-
-        return StreamingResponse(stream(), media_type="text/event-stream")
-
     if web_root is not None and (web_root / "index.html").exists():
         web_root = web_root.resolve()
         assets = web_root / "assets"
@@ -585,11 +601,11 @@ def create_api(
 
         @app.get("/", response_class=HTMLResponse)
         def placeholder() -> str:
-            return """
+            return f"""
             <!doctype html><html lang="zh-CN"><meta charset="utf-8">
             <meta name="viewport" content="width=device-width,initial-scale=1">
             <title>HManガ</title><body style="font-family:sans-serif;padding:2rem">
-            <h1>HManガ</h1><p>手机网页尚未构建，局域网服务运行正常。</p></body></html>
+            <h1>HManガ</h1><p>{tr("web.unbuilt")}</p></body></html>
             """
 
     return app

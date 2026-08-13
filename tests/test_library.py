@@ -40,14 +40,14 @@ def test_scan_collects_comics_and_illustrations(tmp_path: Path) -> None:
     database, library, root = build_library(tmp_path)
     write_comic(root / "001234.zip")
     write_comic(root / "named-work.zip")
-    Image.new("RGB", (10, 10), "green").save(root / "插画" / "画.png")
+    Image.new("RGB", (10, 10), "green").save(root / "illustration" / "画.png")
     (root / "broken.zip").write_bytes(b"not a zip")
-    (root / "插画" / "not-image.mp3").write_bytes(b"not an image")
+    (root / "illustration" / "not-image.mp3").write_bytes(b"not an image")
 
     first = library.scan()
     assert (first.comics, first.illustrations) == (2, 1)
     assert len(first.added) == 3
-    assert sorted(first.invalid) == ["broken.zip", "插画/not-image.mp3"]
+    assert sorted(first.invalid) == ["broken.zip", "illustration/not-image.mp3"]
 
     works = {work.file_name: work for work in library.list_works()}
     assert works["001234.zip"].number == "001234"
@@ -57,6 +57,24 @@ def test_scan_collects_comics_and_illustrations(tmp_path: Path) -> None:
     second = library.scan()
     assert second.added == []
     assert second.invalid == []  # unchanged invalid files do not notify repeatedly
+    database.close()
+
+
+def test_configure_root_migrates_legacy_chinese_directories(tmp_path: Path) -> None:
+    root = tmp_path / "library"
+    (root / "插画").mkdir(parents=True)
+    (root / "备份").mkdir()
+    (root / "插画" / "legacy.png").write_bytes(b"image")
+    (root / "备份" / "legacy.sqlite").write_bytes(b"backup")
+    database = Database(tmp_path / "data.db")
+    database.initialize("test")
+
+    LibraryService(database).configure_root(root)
+
+    assert (root / "illustration" / "legacy.png").is_file()
+    assert (root / "config-backup" / "legacy.sqlite").is_file()
+    assert not (root / "插画").exists()
+    assert not (root / "备份").exists()
     database.close()
 
 

@@ -128,6 +128,7 @@ class Device(Base):
     last_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
+    total_connected_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
@@ -258,6 +259,16 @@ class Database:
                     "ON works (normalized_title)"
                 )
             )
+            device_columns = {
+                column["name"] for column in inspect(self.engine).get_columns("devices")
+            }
+            if "total_connected_seconds" not in device_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE devices ADD COLUMN "
+                        "total_connected_seconds INTEGER NOT NULL DEFAULT 0"
+                    )
+                )
 
     def _backfill_search_columns(self) -> None:
         from hmanga.text import normalize_text

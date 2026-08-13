@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import zipfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
+from threading import RLock
 
 from PIL import Image, UnidentifiedImageError
 from pillow_heif import register_heif_opener
@@ -21,12 +23,44 @@ from hmanga.database import (
     ReadingProgress,
     Work,
 )
+from hmanga.i18n import tr, trf
 from hmanga.text import natural_key, normalize_text
 
 register_heif_opener()
 
 NUMBER_PATTERN = re.compile(r"[0-9]+")
 LIBRARY_ROOT_KEY = "library_root"
+ILLUSTRATION_DIRECTORY = "illustration"
+BACKUP_DIRECTORY = "config-backup"
+LEGACY_ILLUSTRATION_DIRECTORY = "插画"
+LEGACY_BACKUP_DIRECTORY = tr("label.backup")
+
+
+def migrate_legacy_library_directories(root: Path) -> None:
+    """Move old Chinese folder names into the English library layout."""
+    for legacy_name, current_name in (
+        (LEGACY_ILLUSTRATION_DIRECTORY, ILLUSTRATION_DIRECTORY),
+        (LEGACY_BACKUP_DIRECTORY, BACKUP_DIRECTORY),
+    ):
+        legacy = root / legacy_name
+        current = root / current_name
+        if not legacy.is_dir():
+            continue
+        if not current.exists():
+            legacy.rename(current)
+            continue
+        current.mkdir(exist_ok=True)
+        for source in legacy.iterdir():
+            target = current / source.name
+            if target.exists():
+                index = 1
+                while True:
+                    target = current / f"{source.stem}-legacy-{index}{source.suffix}"
+                    if not target.exists():
+                        break
+                    index += 1
+            os.replace(source, target)
+        legacy.rmdir()
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +153,7 @@ def inspect_illustration(path: Path) -> bool:
 class LibraryService:
     def __init__(self, database: Database) -> None:
         self.database = database
+        self.operation_lock = RLock()
 
     def library_root(self) -> Path | None:
         with self.database.session() as session:
@@ -128,9 +163,25 @@ class LibraryService:
     def configure_root(self, root: Path) -> Path:
         root = root.expanduser().resolve()
         root.mkdir(parents=True, exist_ok=True)
-        (root / "插画").mkdir(exist_ok=True)
-        (root / "备份").mkdir(exist_ok=True)
+        migrate_legacy_library_directories(root)
+        (root / ILLUSTRATION_DIRECTORY).mkdir(exist_ok=True)
+        (root / BACKUP_DIRECTORY).mkdir(exist_ok=True)
         with self.database.session() as session:
+            legacy_prefix = LEGACY_ILLUSTRATION_DIRECTORY + "/"
+            for work in session.scalars(
+                select(Work).where(Work.relative_path.startswith(legacy_prefix))
+            ):
+                work.relative_path = (
+                    ILLUSTRATION_DIRECTORY + work.relative_path[len(legacy_prefix) :]
+                )
+            for observation in session.scalars(
+                select(FileObservation).where(
+                    FileObservation.relative_path.startswith(legacy_prefix)
+                )
+            ):
+                observation.relative_path = (
+                    ILLUSTRATION_DIRECTORY + observation.relative_path[len(legacy_prefix) :]
+                )
             row = session.get(AppMeta, LIBRARY_ROOT_KEY)
             if row is None:
                 session.add(AppMeta(key=LIBRARY_ROOT_KEY, value=str(root)))
@@ -162,15 +213,15 @@ class LibraryService:
     def resolve_replacement(self, work_id: int, preserve_metadata: bool) -> None:
         root = self.library_root()
         if root is None:
-            raise ValueError("尚未设置作品目录")
+            raise ValueError(tr("label.library_root_unset"))
         with self.database.session() as session:
             work = session.get(Work, work_id)
             if work is None or work.status != "replacement_pending":
-                raise ValueError("待处理替换不存在")
+                raise ValueError(tr("error.pending_replacement_missing"))
             path = root / Path(work.relative_path)
             valid, default_cover = inspect_comic(path) if work.kind == "comic" else (True, None)
             if not valid:
-                raise ValueError("新文件无法读取")
+                raise ValueError(tr("error.replacement_file_unreadable"))
             if preserve_metadata and work.kind == "comic" and work.cover_member:
                 with zipfile.ZipFile(path) as archive:
                     if work.cover_member not in archive.namelist():
@@ -178,7 +229,7 @@ class LibraryService:
                         session.add(
                             Notification(
                                 kind="cover_fallback",
-                                title=f"{work.file_name} 的原自定义封面不存在，已恢复默认封面",
+                                title=trf("cover.fallback", file_name=work.file_name),
                                 details_json=json.dumps([work.file_name], ensure_ascii=False),
                             )
                         )
@@ -204,6 +255,10 @@ class LibraryService:
             work.updated_at = datetime.now(UTC)
 
     def scan(self) -> ScanResult:
+        with self.operation_lock:
+            return self._scan_unlocked()
+
+    def _scan_unlocked(self) -> ScanResult:
         root = self.library_root()
         result = ScanResult()
         if root is None or not root.is_dir():
@@ -329,7 +384,7 @@ class LibraryService:
             )
             result.comics += 1
 
-        illustration_root = root / "插画"
+        illustration_root = root / ILLUSTRATION_DIRECTORY
         if illustration_root.is_dir():
             for path in sorted(illustration_root.iterdir(), key=lambda item: item.name.casefold()):
                 if not path.is_file():
@@ -337,7 +392,7 @@ class LibraryService:
                 if not inspect_illustration(path):
                     stat = path.stat()
                     result.invalid_observations.append(
-                        (f"插画/{path.name}", stat.st_size, stat.st_mtime_ns)
+                        (f"{ILLUSTRATION_DIRECTORY}/{path.name}", stat.st_size, stat.st_mtime_ns)
                     )
                     continue
                 stat = path.stat()
@@ -345,7 +400,7 @@ class LibraryService:
                     Candidate(
                         kind="illustration",
                         path=path,
-                        relative_path=f"插画/{path.name}",
+                        relative_path=f"{ILLUSTRATION_DIRECTORY}/{path.name}",
                         file_name=path.name,
                         number=None,
                         file_size=stat.st_size,
@@ -387,19 +442,19 @@ class LibraryService:
     @staticmethod
     def _add_scan_notifications(session, result: ScanResult) -> None:
         events = (
-            ("files_added", f"发现 {len(result.added)} 个新文件", result.added),
-            ("files_missing", f"发现 {len(result.missing)} 个文件丢失", result.missing),
+            ("files_added", trf("scan.new_files", count=len(result.added)), result.added),
+            ("files_missing", trf("scan.missing_files", count=len(result.missing)), result.missing),
             (
                 "files_renamed",
-                f"发现 {len(result.renamed)} 个文件被重命名",
+                trf("scan.renamed_files", count=len(result.renamed)),
                 [{"old": old, "new": new} for old, new in result.renamed],
             ),
             (
                 "replacement_pending",
-                f"发现 {len(result.replacements)} 个文件内容被替换",
+                trf("scan.replaced_files", count=len(result.replacements)),
                 result.replacements,
             ),
-            ("invalid_files", f"发现 {len(result.invalid)} 个异常文件", result.invalid),
+            ("invalid_files", trf("scan.invalid_files", count=len(result.invalid)), result.invalid),
         )
         for kind, title, details in events:
             if details:
