@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import pytest
 
 from hmanga.catalog import CatalogQuery, CatalogService
-from hmanga.database import Database, Tag, TagGroup, Work, WorkTag
+from hmanga.database import Database, Work
 from hmanga.text import normalize_text
 
 
@@ -88,7 +88,7 @@ def test_category_tag_names_are_limited_to_five_characters(database: Database) -
     catalog = CatalogService(database)
     tag = catalog.create_tag("abcde")
 
-    with pytest.raises(ValueError, match="只能使用系统分组"):
+    with pytest.raises(ValueError):
         catalog.create_group("新分组")
     with pytest.raises(ValueError, match="最多 5 个字符"):
         catalog.create_tag("abcdef")
@@ -106,9 +106,9 @@ def test_only_fixed_groups_are_available(database: Database) -> None:
     catalog.move_tag(tag.id, None)
     assert catalog.list_tags()[0].group_id == category.id
     for group in (author, category):
-        with pytest.raises(ValueError, match="不能改名"):
+        with pytest.raises(ValueError):
             catalog.rename_group(group.id, "新名")
-        with pytest.raises(ValueError, match="不能删除"):
+        with pytest.raises(ValueError):
             catalog.delete_group(group.id, delete_tags=False)
 
 
@@ -137,11 +137,11 @@ def test_author_system_group_rules(database: Database) -> None:
     tags = catalog.list_tags()
 
     assert catalog.tag_display_name(tags[0], tags) == tag.name
-    with pytest.raises(ValueError, match="不能改名"):
+    with pytest.raises(ValueError):
         catalog.rename_group(author.id, "原作")
-    with pytest.raises(ValueError, match="不能删除"):
+    with pytest.raises(ValueError):
         catalog.delete_group(author.id, delete_tags=False)
-    with pytest.raises(ValueError, match="不能移出"):
+    with pytest.raises(ValueError):
         catalog.move_tag(tag.id, None)
 
 
@@ -197,43 +197,6 @@ def test_text_search_unions_title_tag_and_group_matches(database: Database) -> N
 
     assert {work.id for work in result.items} == {title_match, tag_match, group_match}
     assert unrelated not in {work.id for work in result.items}
-
-
-def test_legacy_groups_and_ungrouped_tags_merge_into_category(database: Database) -> None:
-    first = add_work(database, "1.zip", "一")
-    second = add_work(database, "2.zip", "二")
-    with database.session() as session:
-        legacy_group = TagGroup(name="旧分组", normalized_name=normalize_text("旧分组"))
-        session.add(legacy_group)
-        session.flush()
-        grouped = Tag(
-            name="恋爱",
-            normalized_name=normalize_text("恋爱"),
-            group_id=legacy_group.id,
-            group_key=legacy_group.id,
-        )
-        ungrouped = Tag(
-            name="恋爱",
-            normalized_name=normalize_text("恋爱"),
-            group_id=None,
-            group_key=0,
-        )
-        session.add_all([grouped, ungrouped])
-        session.flush()
-        session.add_all(
-            [
-                WorkTag(work_id=first, tag_id=grouped.id),
-                WorkTag(work_id=second, tag_id=ungrouped.id),
-            ]
-        )
-
-    catalog = CatalogService(database)
-
-    tags = catalog.list_tags()
-    assert len(tags) == 1
-    assert tags[0].group is not None and tags[0].group.name == "类别"
-    assert {work.id for work in tags[0].works} == {first, second}
-    assert [group.name for group in catalog.list_groups()] == ["作者", "类别"]
 
 
 def test_catalog_revision_changes_after_shared_metadata_edits(database: Database) -> None:

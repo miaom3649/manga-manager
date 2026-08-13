@@ -7,9 +7,7 @@ from pathlib import Path
 
 APP_NAME = "HManガ"
 APP_ID = "hmanga"
-LEGACY_APP_ID = "HLibrary"
 DATABASE_NAME = "hmanga.db"
-LEGACY_DATABASE_NAME = "hlibrary.db"
 DEFAULT_API_HOST = "0.0.0.0"
 DEFAULT_API_PORT = 18459
 
@@ -21,18 +19,7 @@ def user_data_dir() -> Path:
     else:
         root = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
 
-    data_dir = root / APP_ID
-    legacy_dir = root / LEGACY_APP_ID
-    if not data_dir.exists() and legacy_dir.exists():
-        legacy_dir.rename(data_dir)
-
-    if data_dir.exists():
-        for suffix in ("", "-wal", "-shm"):
-            legacy_database = data_dir / f"{LEGACY_DATABASE_NAME}{suffix}"
-            database = data_dir / f"{DATABASE_NAME}{suffix}"
-            if legacy_database.exists() and not database.exists():
-                legacy_database.rename(database)
-    return data_dir
+    return root / APP_ID
 
 
 @dataclass(frozen=True, slots=True)

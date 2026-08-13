@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
+
 from hmanga.database import AppMeta, Database
 from hmanga.i18n import tr
 
@@ -13,11 +15,8 @@ class AppearanceService:
     def theme(self) -> str:
         with self.database.session() as session:
             value = session.get(AppMeta, THEME_KEY)
-            # Older versions stored ``system``.  It used the platform's native
-            # palette and therefore looked different from HManガ's dark theme.
-            # Treat it as dark so existing installations migrate automatically.
-            if value and value.value == "light":
-                return "light"
+            if value and value.value in {"system", "light", "dark"}:
+                return value.value
             return "dark"
 
     def set_theme(self, theme: str) -> None:
@@ -33,7 +32,7 @@ class AppearanceService:
 
 def apply_theme(app, theme: str) -> None:
     if theme == "system":
-        theme = "dark"
+        theme = "dark" if app.styleHints().colorScheme() == Qt.ColorScheme.Dark else "light"
     button_style = (
         "QPushButton { background: transparent; border: 2px solid #9a6f7b; "
         "border-radius: 10px; padding: 7px 12px; } "
@@ -64,9 +63,11 @@ def apply_theme(app, theme: str) -> None:
         )
     elif theme == "light":
         app.setStyleSheet(
-            "QWidget { background: #faf6f7; color: #2b2427; } "
-            "QLineEdit, QListWidget, QComboBox, QScrollArea { background: white; "
-            "border: 1px solid #d8d0df; } " + button_style + field_style
+            "QWidget { background: #eee7e9; color: #2b2427; } "
+            "QLineEdit, QListWidget, QComboBox, QScrollArea { background: #f7f1f3; "
+            "border: 1px solid #cfc3c7; } "
+            'QLabel[tagChip="true"] { color: #2b2427; } '
+            'QPushButton[tagChip="true"]:checked { color: #2b2427; } ' + button_style + field_style
         )
     else:
         app.setStyleSheet(button_style + field_style)

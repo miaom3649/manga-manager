@@ -3,13 +3,16 @@ from __future__ import annotations
 import json
 import math
 import shutil
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QEvent, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
+    QActionGroup,
     QCloseEvent,
     QColor,
+    QCursor,
     QIcon,
     QMovie,
     QPainter,
@@ -32,6 +35,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QPushButton,
     QRadioButton,
     QScrollArea,
@@ -112,14 +116,15 @@ class TagSummaryWidget(QWidget):
     @staticmethod
     def _chip(name: str, color: str) -> QLabel:
         chip = QLabel(tag_chip_text(name))
+        chip.setProperty("tagChip", True)
         chip.setProperty("authorTag", color.casefold() == AUTHOR_TAG_COLOR.casefold())
         chip.setFixedHeight(26)
         chip.setAlignment(Qt.AlignCenter)
         chip.setToolTip(name)
         chip.setStyleSheet(
             f"QLabel {{ padding: 0 8px; border-radius: 9px; "
-            f"background: {color}; color: white; }} "
-            f'QLabel[authorTag="true"] {{ background: {AUTHOR_TAG_COLOR}; color: white; }}'
+            f"background: {color}; }} "
+            f'QLabel[authorTag="true"] {{ background: {AUTHOR_TAG_COLOR}; }}'
         )
         return chip
 
@@ -239,7 +244,10 @@ class CenteredComboBox(QComboBox):
 
 class MainWindow(QMainWindow):
     request_exit = Signal()
+    request_restart = Signal()
     notification_count_changed = Signal(int)
+    theme_changed = Signal(str)
+    language_changed = Signal(str)
 
     def __init__(
         self,
@@ -287,6 +295,8 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
         self.resize(1100, 720)
         self._allow_close = False
+        self._restart_after_exit = False
+        self._exit_started = False
 
         root = QWidget(self)
         layout = QVBoxLayout(root)
@@ -585,6 +595,7 @@ class MainWindow(QMainWindow):
                 (self.illustration_filter, "illustration"),
             )
         ):
+            button.setProperty("tagChip", True)
             button.setCheckable(True)
             self.kind_filter_group.addButton(button)
             button.setChecked(kind in self.selected_kinds)
@@ -621,10 +632,10 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _tag_button_style(color: str) -> str:
         return (
-            "QPushButton { background: transparent; color: palette(text); "
+            "QPushButton { background: transparent; "
             f"border: 1px solid {color}; border-radius: 15px; "
             "min-height: 30px; max-height: 30px; padding: 0 12px; } "
-            f"QPushButton:checked {{ background: {color}; color: white; font-weight: 700; }}"
+            f"QPushButton:checked {{ background: {color}; font-weight: 700; }}"
         )
 
     def _refresh_filter_tags(self) -> None:
@@ -634,11 +645,15 @@ class MainWindow(QMainWindow):
             button.deleteLater()
         self.custom_tag_buttons.clear()
         system_search = self.tag_search.text().strip().casefold()
-        self.comic_filter.setVisible(not system_search or system_search in "漫画".casefold())
-        self.illustration_filter.setVisible(not system_search or system_search in "插画".casefold())
+        self.comic_filter.setVisible(
+            not system_search or system_search in tr("label.comic").casefold()
+        )
+        self.illustration_filter.setVisible(
+            not system_search or system_search in tr("label.illustration").casefold()
+        )
         all_tags = self.catalog.list_tags()
         classified_tags = []
-        show_all_authors = system_search == "作者".casefold()
+        show_all_authors = system_search == tr("label.author").casefold()
         for tag in self.catalog.list_tags(self.tag_search.text()):
             author = self.catalog.is_author_tag(tag)
             if author and not show_all_authors and tag.id not in self.selected_tag_ids:
@@ -656,6 +671,7 @@ class MainWindow(QMainWindow):
         column = 0
         for category, tag, display_name, full_row, author in classified_tags:
             button = QPushButton()
+            button.setProperty("tagChip", True)
             button.setToolTip(display_name)
             button.setProperty(
                 "tagLayoutClass",
@@ -722,7 +738,11 @@ class MainWindow(QMainWindow):
         else:
             self.selected_tag_ids.discard(tag_id)
         self._filters_changed()
-        if author_tag and not checked and self.tag_search.text().strip().casefold() != "作者":
+        if (
+            author_tag
+            and not checked
+            and self.tag_search.text().strip().casefold() != tr("label.author").casefold()
+        ):
             self._refresh_filter_tags()
 
     def clear_filters(self) -> None:
@@ -808,11 +828,15 @@ class MainWindow(QMainWindow):
         theme_label = QLabel(tr("label.appearance_theme"))
         theme_label.setAlignment(Qt.AlignCenter)
         self.theme_box = CenteredComboBox()
+        self.theme_box.addItem(tr("label.follow_system"), "system")
         self.theme_box.addItem(tr("label.light_theme"), "light")
         self.theme_box.addItem(tr("label.dark_theme"), "dark")
         self.theme_box.setCurrentIndex(max(0, self.theme_box.findData(self.appearance.theme())))
         self.theme_box.currentIndexChanged.connect(self.change_theme)
         self.language_box = CenteredComboBox()
+        # Each entry is the self-name declared by that language pack. Unlike
+        # ordinary combo-box labels, these names must not follow the active locale.
+        self.language_box.setProperty("i18nKeepItemText", True)
         for code, name in available_languages():
             self.language_box.addItem(name, code)
         self.language_box.setCurrentIndex(max(0, self.language_box.findData(active_language())))
@@ -929,6 +953,19 @@ class MainWindow(QMainWindow):
     def open_pairing(self) -> None:
         PairingDialog(self.pairing, self).exec()
 
+    def show_main_window(self, page: int = 0) -> None:
+        self._show_page(page)
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def show_settings(self) -> None:
+        self.show_main_window(2)
+
+    def show_pairing(self) -> None:
+        self.show_main_window(0)
+        self.open_pairing()
+
     def migrate_root(self) -> None:
         current = self.library.library_root()
         selected = QFileDialog.getExistingDirectory(
@@ -983,16 +1020,16 @@ class MainWindow(QMainWindow):
             tr("status.migration_complete"),
             trf("migration.completed", files=result.files)
             + (
-                tr("message.legacy_directory_deleted")
+                tr("message.source_directory_deleted")
                 if result.old_root_removed
-                else tr("message.legacy_directory_retained")
+                else tr("message.source_directory_retained")
             ),
         )
         self.refresh()
 
     def create_manual_backup(self) -> None:
         try:
-            path = self.backups.create("手动")
+            path = self.backups.create("manual")
         except Exception as exc:
             show_message(self, tr("error.backup_failed"), str(exc), danger=True)
             return
@@ -1011,10 +1048,20 @@ class MainWindow(QMainWindow):
 
     def change_theme(self) -> None:
         theme = self.theme_box.currentData()
+        self.set_theme(theme)
+
+    def set_theme(self, theme: str) -> None:
+        if theme not in {"system", "light", "dark"}:
+            return
         self.appearance.set_theme(theme)
+        if self.theme_box.currentData() != theme:
+            self.theme_box.blockSignals(True)
+            self.theme_box.setCurrentIndex(max(0, self.theme_box.findData(theme)))
+            self.theme_box.blockSignals(False)
         app = QApplication.instance()
         if app:
             apply_theme(app, theme)
+        self.theme_changed.emit(theme)
 
     def change_language(self) -> None:
         code = self.language_box.currentData()
@@ -1023,6 +1070,7 @@ class MainWindow(QMainWindow):
         set_language(self.catalog.database, code)
         self.refresh()
         localize_tree(self)
+        self.language_changed.emit(code)
 
     def restore_backup(self) -> None:
         selected, _ = QFileDialog.getOpenFileName(
@@ -1059,6 +1107,7 @@ class MainWindow(QMainWindow):
         )
         self.refresh_button.setEnabled(root is not None)
 
+        self._refresh_filter_tags()
         self.refresh_works()
 
         self.notification_list.clear()
@@ -1226,8 +1275,8 @@ class MainWindow(QMainWindow):
             ]
             custom_tag_entries.sort(key=lambda entry: entry[2])
             tag_entries = [(kind, "#4f7c78"), *[entry[:2] for entry in custom_tag_entries]]
-            # 作品内容完全由自定义 row_widget 绘制。列表项自身不能再带
-            # 旧版文本，否则部分 Windows 样式会把文字画在封面左侧。
+            # Work content is drawn entirely by the custom row widget. Do not set
+            # list-item text, or some Windows styles draw it beside the cover.
             item = QListWidgetItem()
             item.setData(Qt.UserRole, work.id)
             item.setSizeHint(QSize(0, 132))
@@ -1535,6 +1584,8 @@ class MainWindow(QMainWindow):
             self._tray.showMessage(APP_NAME, trf("tray.minimized", app_name=APP_NAME))
 
     def exit_application(self) -> None:
+        if self._exit_started:
+            return
         if self.uploads.active_count():
             choice = choose_action(
                 self,
@@ -1562,13 +1613,28 @@ class MainWindow(QMainWindow):
             if choice == "cancel":
                 self.uploads.cancel_all()
             else:
+                self._restart_after_exit = False
                 return
         self._finish_exit()
 
+    def quit_application(self) -> None:
+        self._restart_after_exit = False
+        self.exit_application()
+
+    def restart_application(self) -> None:
+        self._restart_after_exit = True
+        self.exit_application()
+
     def _finish_exit(self) -> None:
+        if self._exit_started:
+            return
+        self._exit_started = True
         self._save_window_geometry()
         self._allow_close = True
-        self.request_exit.emit()
+        if self._restart_after_exit:
+            self.request_restart.emit()
+        else:
+            self.request_exit.emit()
 
 
 def create_tray(app: QApplication, window: MainWindow) -> QSystemTrayIcon:
@@ -1577,25 +1643,78 @@ def create_tray(app: QApplication, window: MainWindow) -> QSystemTrayIcon:
     window.setWindowIcon(icon)
     tray = QSystemTrayIcon(icon)
     tray.setToolTip(APP_NAME)
-    menu = tray.contextMenu()
-    if menu is None:
-        from PySide6.QtWidgets import QMenu
-
-        menu = QMenu()
+    menu = QMenu()
+    # Linux StatusNotifierItem hosts commonly require a bound context menu to
+    # register and display the tray icon. Windows does not, so Windows can use
+    # explicit primary/context dispatch and preserve the requested distinction.
+    if sys.platform != "win32":
         tray.setContextMenu(menu)
-    show_action = QAction(trf("tray.open", app_name=APP_NAME), tray)
-    exit_action = QAction(tr("action.exit"), tray)
-    show_action.triggered.connect(window.showNormal)
-    show_action.triggered.connect(window.activateWindow)
-    exit_action.triggered.connect(window.exit_application)
+    show_action = QAction(tr("tray.show_window"), tray)
+    settings_action = QAction(tr("label.settings"), tray)
+    pairing_action = QAction(tr("label.phone_pairing"), tray)
+    show_action.triggered.connect(window.show_main_window)
+    settings_action.triggered.connect(window.show_settings)
+    pairing_action.triggered.connect(window.show_pairing)
+
+    theme_menu = QMenu(tr("tray.theme"), menu)
+    theme_group = QActionGroup(tray)
+    theme_group.setExclusive(True)
+    system_action = QAction(tr("label.follow_system"), tray, checkable=True)
+    light_action = QAction(tr("label.light_theme"), tray, checkable=True)
+    dark_action = QAction(tr("label.dark_theme"), tray, checkable=True)
+    system_action.setData("system")
+    light_action.setData("light")
+    dark_action.setData("dark")
+    theme_group.addAction(system_action)
+    theme_group.addAction(light_action)
+    theme_group.addAction(dark_action)
+    theme_menu.addActions(theme_group.actions())
+    current_theme = window.appearance.theme()
+    system_action.setChecked(current_theme == "system")
+    light_action.setChecked(current_theme == "light")
+    dark_action.setChecked(current_theme == "dark")
+    theme_group.triggered.connect(lambda action: window.set_theme(action.data()))
+
+    def sync_theme(theme: str) -> None:
+        system_action.setChecked(theme == "system")
+        light_action.setChecked(theme == "light")
+        dark_action.setChecked(theme == "dark")
+
+    window.theme_changed.connect(sync_theme)
+
+    def sync_language(_code: str) -> None:
+        show_action.setText(tr("tray.show_window"))
+        settings_action.setText(tr("label.settings"))
+        pairing_action.setText(tr("label.phone_pairing"))
+        theme_menu.setTitle(tr("tray.theme"))
+        system_action.setText(tr("label.follow_system"))
+        light_action.setText(tr("label.light_theme"))
+        dark_action.setText(tr("label.dark_theme"))
+        restart_action.setText(tr("tray.restart"))
+        exit_action.setText(tr("tray.exit"))
+
+    window.language_changed.connect(sync_language)
+
+    restart_action = QAction(tr("tray.restart"), tray)
+    restart_action.triggered.connect(window.restart_application)
+    exit_action = QAction(tr("tray.exit"), tray)
+    exit_action.triggered.connect(window.quit_application)
     menu.addAction(show_action)
+    menu.addAction(settings_action)
+    menu.addAction(pairing_action)
     menu.addSeparator()
+    menu.addMenu(theme_menu)
+    menu.addSeparator()
+    menu.addAction(restart_action)
     menu.addAction(exit_action)
-    tray.activated.connect(
-        lambda reason: (
-            window.showNormal() if reason == QSystemTrayIcon.ActivationReason.DoubleClick else None
-        )
-    )
+
+    def activate_tray(reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            window.show_main_window()
+        elif sys.platform == "win32" and reason == QSystemTrayIcon.ActivationReason.Context:
+            menu.popup(QCursor.pos())
+
+    tray.activated.connect(activate_tray)
     tray.show()
     window.bind_tray(tray)
 

@@ -22,36 +22,36 @@ ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#MyAppName}
 
 [Languages]
-; 简体中文属于 Inno Setup 的贡献翻译，不随 Chocolatey 安装包附带。
-; 构建脚本会从 Inno Setup 官方源码仓库下载到本文件旁边。
+; Simplified Chinese is a contributed Inno Setup translation and is not bundled
+; with the Chocolatey package. The build downloads it from the official repository.
 Name: "chinesesimp"; MessagesFile: "ChineseSimplified.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加图标："; Flags: unchecked
+Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked
 
 [Files]
 Source: "..\dist\HManga\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{group}\{#MyAppName}（调试）"; Filename: "{app}\HManga-Debug.exe"; Comment: "显示诊断日志窗口，仅用于测试"
+Name: "{group}\{#MyAppName} (Debug)"; Filename: "{app}\HManga-Debug.exe"; Comment: "Show diagnostic logs for testing"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "启动 {#MyAppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
 [Code]
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
-    MsgBox('手机访问需要 Windows 允许 HManガ 通过私人网络通信。首次出现防火墙提示时，请只勾选“专用网络”。', mbInformation, MB_OK);
+    MsgBox('Mobile access requires Windows to allow HManガ on private networks. Select only Private networks when the firewall prompt appears.', mbInformation, MB_OK);
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
   begin
-    if MsgBox('是否同时删除 HManガ 的数据库、设置和缩略图缓存？漫画 ZIP、插画原图和主目录内备份不会被删除。', mbConfirmation, MB_YESNO) = IDYES then
+    if MsgBox('Also remove the HManガ database, settings, and thumbnail cache? Comic ZIP files, original illustrations, and backups in the library directory will not be removed.', mbConfirmation, MB_YESNO) = IDYES then
       DelTree(ExpandConstant('{localappdata}\hmanga'), True, True, True);
   end;
 end;

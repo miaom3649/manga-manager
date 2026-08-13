@@ -11,8 +11,7 @@ from hmanga.i18n import tr
 from hmanga.library import BACKUP_DIRECTORY, LibraryService
 
 LAST_AUTO_BACKUP = "last_auto_backup_date"
-BACKUP_KIND_NAMES = {"自动": "auto", "手动": "manual", "恢复前": "restore"}
-BACKUP_KIND_LABELS = {value: key for key, value in BACKUP_KIND_NAMES.items()}
+BACKUP_KINDS = {"auto", "manual", "restore"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,26 +41,22 @@ class BackupService:
             "hmanga-*.tmp",
             "hmanga-*.tmp-wal",
             "hmanga-*.tmp-shm",
-            "H库-*.tmp",
-            "H库-*.tmp-wal",
-            "H库-*.tmp-shm",
         ):
             for path in directory.glob(pattern):
                 path.unlink(missing_ok=True)
 
-    def create(self, kind: str = "手动", *, automatic_day: date | None = None) -> Path:
-        if kind not in {"自动", "手动", "恢复前"}:
+    def create(self, kind: str = "manual", *, automatic_day: date | None = None) -> Path:
+        if kind not in BACKUP_KINDS:
             raise ValueError(tr("label.unknown_backup_type"))
         now = datetime.now()
         directory = self.backup_directory()
-        kind_name = BACKUP_KIND_NAMES[kind]
-        target = directory / f"hmanga-{kind_name}-{now:%Y%m%d-%H%M%S}.sqlite"
+        target = directory / f"hmanga-{kind}-{now:%Y%m%d-%H%M%S}.sqlite"
         # A second manual click within the same second must not overwrite the
         # first backup. Keep the required filename shape and advance to the
         # next free timestamp instead of adding a random suffix.
         while target.exists():
             now += timedelta(seconds=1)
-            target = directory / f"hmanga-{kind_name}-{now:%Y%m%d-%H%M%S}.sqlite"
+            target = directory / f"hmanga-{kind}-{now:%Y%m%d-%H%M%S}.sqlite"
         temporary = target.with_suffix(".tmp")
         source = sqlite3.connect(self.database.path)
         destination = sqlite3.connect(temporary)
@@ -83,7 +78,7 @@ class BackupService:
             temporary.unlink(missing_ok=True)
             temporary.with_name(temporary.name + "-wal").unlink(missing_ok=True)
             temporary.with_name(temporary.name + "-shm").unlink(missing_ok=True)
-        if kind == "自动":
+        if kind == "auto":
             # `automatic_if_due` may be checking a supplied/local calendar day.
             # Record that exact day instead of deriving it again from the clock,
             # otherwise a timezone/day-boundary can immediately create a duplicate.
@@ -110,7 +105,7 @@ class BackupService:
     def list_backups(self) -> list[BackupInfo]:
         results = []
         directory = self.backup_directory()
-        for path in (*directory.glob("hmanga-*.sqlite"), *directory.glob("H库-*.sqlite")):
+        for path in directory.glob("hmanga-*.sqlite"):
             parts = path.stem.split("-")
             if len(parts) < 4:
                 continue
@@ -118,7 +113,7 @@ class BackupService:
                 created = datetime.strptime(f"{parts[2]}-{parts[3]}", "%Y%m%d-%H%M%S")
             except ValueError:
                 created = datetime.fromtimestamp(path.stat().st_mtime)
-            kind = BACKUP_KIND_LABELS.get(parts[1], parts[1])
+            kind = parts[1]
             results.append(BackupInfo(path, kind, created))
         return sorted(results, key=lambda item: item.path.stat().st_mtime, reverse=True)
 
@@ -129,10 +124,6 @@ class BackupService:
             *directory.glob("hmanga-*.tmp"),
             *directory.glob("hmanga-*.tmp-wal"),
             *directory.glob("hmanga-*.tmp-shm"),
-            *directory.glob("H库-*.sqlite"),
-            *directory.glob("H库-*.tmp"),
-            *directory.glob("H库-*.tmp-wal"),
-            *directory.glob("H库-*.tmp-shm"),
         }
         removed = 0
         for path in targets:
@@ -147,7 +138,7 @@ class BackupService:
             value = session.get(AppMeta, LAST_AUTO_BACKUP)
             if value and value.value == today.isoformat():
                 return None
-        return self.create("自动", automatic_day=today)
+        return self.create("auto", automatic_day=today)
 
     def scheduled_if_due(self, now: datetime | None = None) -> Path | None:
         now = now or datetime.now()
@@ -157,7 +148,7 @@ class BackupService:
 
     def restore(self, path: Path) -> Path:
         self.validate(path)
-        protection = self.create("恢复前")
+        protection = self.create("restore")
         source = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         self.database.close()
         destination = sqlite3.connect(self.database.path)
@@ -180,10 +171,7 @@ class BackupService:
 
     def _trim_automatic(self) -> None:
         automatic = sorted(
-            (
-                *self.backup_directory().glob("hmanga-auto-*.sqlite"),
-                *self.backup_directory().glob("H库-自动-*.sqlite"),
-            ),
+            self.backup_directory().glob("hmanga-auto-*.sqlite"),
             key=lambda path: path.stat().st_mtime,
             reverse=True,
         )

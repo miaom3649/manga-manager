@@ -1,6 +1,12 @@
 import copy from "../../src/hmanga/locales/zh-CN.json";
 
-const messages = copy as Record<string, string>;
+const defaultMessages = copy as Record<string, string>;
+let messages = defaultMessages;
+
+export function setMessages(next: Record<string, string>): void {
+  messages = { ...defaultMessages, ...next };
+  document.documentElement.lang = localStorage.getItem("hmanga-language") ?? "zh-CN";
+}
 
 export function t(key: string): string {
   return messages[key] ?? key;

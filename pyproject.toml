@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hmanga"
 version = "1.0.0"
-description = "HManガ - Windows 本地漫画与插画管理器"
+description = "HManガ - Local comic and illustration manager for Windows"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [

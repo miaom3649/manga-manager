@@ -73,6 +73,10 @@ class LibraryController(QObject):
             self.request_scan()
 
     def stop(self) -> None:
-        self._stopping = True
+        with self._scan_lock:
+            if self._stopping:
+                return
+            self._stopping = True
+            self._rescan_requested = False
         self._watcher.stop()
         self._executor.shutdown(wait=True, cancel_futures=True)

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import zipfile
 from dataclasses import dataclass, field
@@ -32,35 +31,6 @@ NUMBER_PATTERN = re.compile(r"[0-9]+")
 LIBRARY_ROOT_KEY = "library_root"
 ILLUSTRATION_DIRECTORY = "illustration"
 BACKUP_DIRECTORY = "config-backup"
-LEGACY_ILLUSTRATION_DIRECTORY = "插画"
-LEGACY_BACKUP_DIRECTORY = tr("label.backup")
-
-
-def migrate_legacy_library_directories(root: Path) -> None:
-    """Move old Chinese folder names into the English library layout."""
-    for legacy_name, current_name in (
-        (LEGACY_ILLUSTRATION_DIRECTORY, ILLUSTRATION_DIRECTORY),
-        (LEGACY_BACKUP_DIRECTORY, BACKUP_DIRECTORY),
-    ):
-        legacy = root / legacy_name
-        current = root / current_name
-        if not legacy.is_dir():
-            continue
-        if not current.exists():
-            legacy.rename(current)
-            continue
-        current.mkdir(exist_ok=True)
-        for source in legacy.iterdir():
-            target = current / source.name
-            if target.exists():
-                index = 1
-                while True:
-                    target = current / f"{source.stem}-legacy-{index}{source.suffix}"
-                    if not target.exists():
-                        break
-                    index += 1
-            os.replace(source, target)
-        legacy.rmdir()
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,7 +87,7 @@ def inspect_comic(path: Path) -> tuple[bool, str | None]:
                 (info for info in archive.infolist() if not info.is_dir()),
                 key=lambda item: natural_key(item.filename),
             )
-            # 不依赖固定页码；按文件名自然升序后的第一张可读图片为封面。
+            # Use the first readable image in natural filename order as the cover.
             for info in members:
                 try:
                     if _readable_image(archive.read(info)):
@@ -127,18 +97,6 @@ def inspect_comic(path: Path) -> tuple[bool, str | None]:
     except (OSError, zipfile.BadZipFile, zipfile.LargeZipFile):
         return False, None
     return False, None
-
-
-def _legacy_default_cover(path: Path) -> str | None:
-    """Return the archive-order cover selected by older H库 versions."""
-    try:
-        with zipfile.ZipFile(path) as archive:
-            for info in archive.infolist():
-                if not info.is_dir() and _readable_image(archive.read(info)):
-                    return info.filename
-    except (OSError, RuntimeError, zipfile.BadZipFile, zipfile.LargeZipFile):
-        return None
-    return None
 
 
 def inspect_illustration(path: Path) -> bool:
@@ -163,25 +121,9 @@ class LibraryService:
     def configure_root(self, root: Path) -> Path:
         root = root.expanduser().resolve()
         root.mkdir(parents=True, exist_ok=True)
-        migrate_legacy_library_directories(root)
         (root / ILLUSTRATION_DIRECTORY).mkdir(exist_ok=True)
         (root / BACKUP_DIRECTORY).mkdir(exist_ok=True)
         with self.database.session() as session:
-            legacy_prefix = LEGACY_ILLUSTRATION_DIRECTORY + "/"
-            for work in session.scalars(
-                select(Work).where(Work.relative_path.startswith(legacy_prefix))
-            ):
-                work.relative_path = (
-                    ILLUSTRATION_DIRECTORY + work.relative_path[len(legacy_prefix) :]
-                )
-            for observation in session.scalars(
-                select(FileObservation).where(
-                    FileObservation.relative_path.startswith(legacy_prefix)
-                )
-            ):
-                observation.relative_path = (
-                    ILLUSTRATION_DIRECTORY + observation.relative_path[len(legacy_prefix) :]
-                )
             row = session.get(AppMeta, LIBRARY_ROOT_KEY)
             if row is None:
                 session.add(AppMeta(key=LIBRARY_ROOT_KEY, value=str(root)))
@@ -278,14 +220,6 @@ class LibraryService:
                 work = by_path.get(candidate.relative_path)
                 if work is not None:
                     unmatched_ids.discard(work.id)
-                    if (
-                        work.kind == "comic"
-                        and candidate.cover_member
-                        and work.cover_member != candidate.cover_member
-                        and work.cover_member == _legacy_default_cover(candidate.path)
-                    ):
-                        work.cover_member = candidate.cover_member
-                        work.updated_at = now
                     if (
                         work.file_size == candidate.file_size
                         and work.modified_ns == candidate.modified_ns

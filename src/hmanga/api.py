@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from hmanga import __version__
 from hmanga.catalog import CatalogQuery, CatalogService
-from hmanga.i18n import tr, trf
+from hmanga.i18n import available_languages, language_catalog, tr, trf
 from hmanga.library import LibraryService
 from hmanga.media import MediaService
 from hmanga.pairing import PairingService
@@ -130,6 +130,19 @@ def create_api(
             "computerName": socket.gethostname(),
         }
 
+    @app.get("/api/locales")
+    def locales(authorization: str | None = Header(None)) -> list[dict[str, str]]:
+        authorize(authorization)
+        return [{"code": code, "name": name} for code, name in available_languages()]
+
+    @app.get("/api/locales/{code}")
+    def locale_messages(code: str, authorization: str | None = Header(None)) -> dict[str, str]:
+        authorize(authorization)
+        try:
+            return language_catalog(code)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.get("/api/works")
     def works(
         text: str = "",
@@ -177,6 +190,7 @@ def create_api(
                     "title": item.title or Path(item.file_name).stem,
                     "rating": item.rating,
                     "status": item.status,
+                    "coverVersion": f"{item.fingerprint}:{item.cover_member or ''}",
                     "tags": [
                         {
                             "id": tag.id,
@@ -227,6 +241,7 @@ def create_api(
             "rating": work.rating,
             "fingerprint": work.fingerprint,
             "coverMember": work.cover_member,
+            "coverVersion": f"{work.fingerprint}:{work.cover_member or ''}",
             "tags": [
                 {
                     "id": tag.id,

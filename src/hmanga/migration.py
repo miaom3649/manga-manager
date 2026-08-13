@@ -77,7 +77,7 @@ class MigrationService:
             )
         if preview.missing:
             raise FileNotFoundError(
-                tr("label.missing_catalogued_files") + "、".join(preview.missing)
+                tr("label.missing_file") + "、".join(preview.missing)
             )
         (target_root / ILLUSTRATION_DIRECTORY).mkdir(exist_ok=True)
         (target_root / BACKUP_DIRECTORY).mkdir(exist_ok=True)

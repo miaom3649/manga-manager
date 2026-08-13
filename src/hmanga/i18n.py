@@ -67,6 +67,14 @@ def available_languages() -> list[tuple[str, str]]:
     return results
 
 
+def language_catalog(code: str) -> dict[str, str]:
+    """Return one language merged over the complete Simplified Chinese catalog."""
+    if _locale_path(code) is None:
+        raise ValueError(f"Unknown language pack: {code}")
+    chinese = _read_catalog(DEFAULT_LANGUAGE)
+    return chinese if code == DEFAULT_LANGUAGE else chinese | _read_catalog(code)
+
+
 def configure_localization(database: Database, user_directory: Path) -> None:
     global _active_language, _user_locale_directory
     _user_locale_directory = user_directory
@@ -105,14 +113,31 @@ def trf(key: str, **values: object) -> str:
     return tr(key).format_map(values)
 
 
+def _message_key(value: str) -> str:
+    """Recover a stable message key from text already rendered in any locale."""
+    if value in catalog():
+        return value
+    codes = [DEFAULT_LANGUAGE, *[code for code, _name in available_languages()]]
+    for code in dict.fromkeys(codes):
+        for key, translated in language_catalog(code).items():
+            if translated == value:
+                return key
+    return value
+
+
 def _translated_property(widget: QWidget, name: str, current: str) -> str:
     source_name = f"i18nSource_{name}"
     translated_name = f"i18nValue_{name}"
     previous_translation = widget.property(translated_name)
     source = widget.property(source_name)
     if source is None or (current != previous_translation and current != source):
-        source = current
+        source = _message_key(current)
         widget.setProperty(source_name, source)
+    else:
+        normalized_source = _message_key(str(source))
+        if normalized_source != source:
+            source = normalized_source
+            widget.setProperty(source_name, source)
     translated = tr(str(source))
     widget.setProperty(translated_name, translated)
     return translated
@@ -143,14 +168,19 @@ def localize_widget(widget: QWidget) -> None:
         translated = _translated_property(widget, "windowTitle", current)
         if current != translated:
             widget.setWindowTitle(translated)
-    if isinstance(widget, QComboBox):
+    if isinstance(widget, QComboBox) and not widget.property("i18nKeepItemText"):
         for index in range(widget.count()):
             # Keep Qt.UserRole untouched: application code stores sort modes,
             # theme IDs and other behavior-critical values there.
             source = widget.itemData(index, 0x04E8)
             if source is None:
-                source = widget.itemText(index)
+                source = _message_key(widget.itemText(index))
                 widget.setItemData(index, source, 0x04E8)
+            else:
+                normalized_source = _message_key(str(source))
+                if normalized_source != source:
+                    source = normalized_source
+                    widget.setItemData(index, source, 0x04E8)
             translated = tr(str(source))
             if widget.itemText(index) != translated:
                 widget.setItemText(index, translated)

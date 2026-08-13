@@ -7,7 +7,6 @@ from PySide6.QtGui import QCloseEvent, QColor, QMouseEvent, QMovie, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
-    QDialogButtonBox,
     QFormLayout,
     QFrame,
     QGraphicsDropShadowEffect,
@@ -22,7 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from hmanga.catalog import CatalogService
+from hmanga.catalog import AUTHOR_GROUP_NAME, CATEGORY_GROUP_NAME, CatalogService
 from hmanga.database import Tag, Work
 from hmanga.desktop.reader_dialog import pixmap_from_bytes
 from hmanga.desktop.tag_widgets import (
@@ -30,7 +29,7 @@ from hmanga.desktop.tag_widgets import (
     tag_chip_text,
     tag_sort_category,
 )
-from hmanga.desktop.windowing import FloatingCardDialog, ScreenCenteredDialog
+from hmanga.desktop.windowing import FloatingCardDialog
 from hmanga.i18n import tr, trf
 from hmanga.media import MediaService
 
@@ -231,36 +230,44 @@ class ClickableTagLabel(QLabel):
         super().mouseReleaseEvent(event)
 
 
-class CoverSelectorDialog(ScreenCenteredDialog):
+class CoverSelectorDialog(FloatingCardDialog):
     def __init__(self, work: Work, media: MediaService, current: str | None, parent=None):
-        super().__init__(parent)
+        super().__init__(parent, card_size=QSize(760, 720))
         self.work = work
         self.media = media
         self.members = media.comic_members(work)
         initial = current or "001.webp"
         self.index = self.members.index(initial) if initial in self.members else 0
         self.selected_member: str | None = current
-        self.setWindowTitle(tr("action.select_cover"))
-        self.resize(720, 720)
-        root = QVBoxLayout(self)
+        heading = QLabel(tr("action.select_cover"))
+        heading.setAlignment(Qt.AlignCenter)
+        heading.setStyleSheet("font-size: 24px; font-weight: 700;")
+        self.card_layout.addWidget(heading)
         self.image = QLabel()
         self.image.setAlignment(Qt.AlignCenter)
-        root.addWidget(self.image, 1)
+        self.image.setMinimumHeight(0)
+        self.card_layout.addWidget(self.image, 1)
         controls = QHBoxLayout()
         previous = QPushButton(tr("label.previous_image"))
+        previous.setFixedHeight(44)
         previous.clicked.connect(lambda: self.move_page(-1))
         self.position = QLabel()
+        self.position.setAlignment(Qt.AlignCenter)
         following = QPushButton(tr("label.next_image"))
+        following.setFixedHeight(44)
         following.clicked.connect(lambda: self.move_page(1))
-        controls.addWidget(previous)
+        controls.addWidget(previous, 1)
         controls.addWidget(self.position, 1, Qt.AlignCenter)
-        controls.addWidget(following)
-        root.addLayout(controls)
-        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
-        buttons.button(QDialogButtonBox.Save).setText(tr("label.set_as_cover"))
-        buttons.accepted.connect(self.choose)
-        buttons.rejected.connect(self.reject)
-        root.addWidget(buttons)
+        controls.addWidget(following, 1)
+        self.card_layout.addLayout(controls)
+        choose = QPushButton(tr("label.set_as_cover"))
+        choose.setFixedHeight(46)
+        choose.setStyleSheet(
+            "QPushButton { background: #9a6f7b; color: white; "
+            "border: 2px solid #b58b96; border-radius: 10px; font-weight: 700; }"
+        )
+        choose.clicked.connect(self.choose)
+        self.card_layout.addWidget(choose)
         self.render()
 
     def render(self) -> None:
@@ -272,7 +279,7 @@ class CoverSelectorDialog(ScreenCenteredDialog):
                 self.media.read_original(self.work, self.members[self.index])
             )
             self.image.setPixmap(
-                pixmap.scaled(620, 570, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                pixmap.scaled(680, 530, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             )
             self.position.setText(
                 f"{self.index + 1}/{len(self.members)} · {self.members[self.index]}"
@@ -323,7 +330,7 @@ class TagEditDialog(FloatingCardDialog):
 
     def _group_changed(self) -> None:
         group_name = self.group_box.currentText()
-        self.name_edit.setMaxLength(200 if group_name == "作者" else 5)
+        self.name_edit.setMaxLength(200 if group_name == AUTHOR_GROUP_NAME else 5)
 
     def save(self) -> None:
         try:
@@ -357,10 +364,10 @@ class TagManagerDialog(FloatingCardDialog):
         self.new_tag_group = QComboBox()
         for group in self.catalog.list_groups():
             self.new_tag_group.addItem(group.name, group.id)
-        category_index = self.new_tag_group.findText("类别")
+        category_index = self.new_tag_group.findText(CATEGORY_GROUP_NAME)
         self.new_tag_group.setCurrentIndex(max(0, category_index))
         self.new_tag_group.currentTextChanged.connect(
-            lambda name: self.tag_name.setMaxLength(200 if name == "作者" else 5)
+            lambda name: self.tag_name.setMaxLength(200 if name == AUTHOR_GROUP_NAME else 5)
         )
         tag_add = QPushButton(tr("action.create_tag"))
         tag_add.clicked.connect(self.create_tag)
@@ -385,12 +392,13 @@ class TagManagerDialog(FloatingCardDialog):
             layout = QHBoxLayout(row)
             layout.setContentsMargins(4, 2, 4, 2)
             name = QLabel(tag.name)
+            name.setProperty("tagChip", True)
             name.setToolTip(tag.name)
             name.setAlignment(Qt.AlignCenter)
             name.setStyleSheet(
                 "background: "
                 + (AUTHOR_TAG_COLOR if self.catalog.is_author_tag(tag) else "#9a6f7b")
-                + "; color: white; border-radius: 9px; padding: 4px 9px;"
+                + "; border-radius: 9px; padding: 4px 9px;"
             )
             layout.addWidget(name, 1)
             work_count = QLabel(trf("works.count", count=len(tag.works)))
@@ -650,13 +658,12 @@ class WorkDetailDialog(FloatingCardDialog):
         ]
         for name, color, _category, tag_id in tag_entries:
             label = ClickableTagLabel(tag_chip_text(name))
+            label.setProperty("tagChip", True)
             label.setObjectName("detailTag")
             label.setAlignment(Qt.AlignCenter)
             label.setToolTip(name)
             label.setFixedHeight(26)
-            label.setStyleSheet(
-                f"background: {color}; color: white; border-radius: 9px; padding: 3px 8px;"
-            )
+            label.setStyleSheet(f"background: {color}; border-radius: 9px; padding: 3px 8px;")
             if tag_id is None:
                 label.clicked.connect(
                     lambda checked_kind=work.kind: self.filter_by_kind(checked_kind)
@@ -774,7 +781,7 @@ class WorkDetailDialog(FloatingCardDialog):
         form.addRow(tr("label.rating_zero_to_three"), self.rating_edit)
         self.root.addLayout(form)
         self.tag_search_edit = QLineEdit()
-        self.tag_search_edit.setPlaceholderText(tr("label.search_tags_or_hidden_groups"))
+        self.tag_search_edit.setPlaceholderText(tr("label.search_tags_or_groups"))
         self.tag_search_edit.textChanged.connect(self.refresh_tag_choices)
         self.root.addWidget(self.tag_search_edit)
         self.tag_content = FlowTagWidget()
@@ -822,6 +829,7 @@ class WorkDetailDialog(FloatingCardDialog):
         tag_choices.sort(key=lambda entry: entry[2])
         for tag, display_name, _category in tag_choices:
             button = QPushButton(display_name, self.tag_content)
+            button.setProperty("tagChip", True)
             button.setCheckable(True)
             button.setChecked(tag.id in self.selected_tags)
             button.setFixedHeight(26)
@@ -834,9 +842,9 @@ class WorkDetailDialog(FloatingCardDialog):
                 else "#777"
             )
             button.setStyleSheet(
-                "QPushButton { background: transparent; color: palette(text); "
+                "QPushButton { background: transparent; "
                 f"border: 1px solid {color}; border-radius: 9px; padding: 0 8px; }} "
-                f"QPushButton:checked {{ background: {color}; color: white; font-weight: 700; }}"
+                f"QPushButton:checked {{ background: {color}; font-weight: 700; }}"
             )
             button.toggled.connect(partial(self.toggle_tag, tag.id))
             self.tag_content.add_tag(button)

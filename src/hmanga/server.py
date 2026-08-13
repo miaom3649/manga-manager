@@ -33,24 +33,33 @@ class ApiServer:
             # immediately instead of waiting for clients to leave.
             "timeout_graceful_shutdown": 0,
         }
-        # 正式版无控制台时禁用控制台日志；调试版有控制台时保留日志。
+        # Disable console logging in windowed builds; keep it in diagnostic builds.
         if sys.stdout is None or sys.stderr is None:
             options["log_config"] = None
         config = uvicorn.Config(create_api(web_root, library, catalog, media, pairing), **options)
         self._server = uvicorn.Server(config)
         self._thread: threading.Thread | None = None
+        self._lifecycle_lock = threading.Lock()
 
     def start(self) -> None:
-        if self._thread and self._thread.is_alive():
-            return
-        self._server.should_exit = False
-        self._thread = threading.Thread(target=self._server.run, name="hmanga-api", daemon=True)
-        self._thread.start()
+        with self._lifecycle_lock:
+            if self._thread and self._thread.is_alive():
+                return
+            self._server.should_exit = False
+            self._server.force_exit = False
+            self._thread = threading.Thread(target=self._server.run, name="hmanga-api", daemon=True)
+            self._thread.start()
 
     def stop(self, timeout: float = 2.0) -> None:
-        self._server.should_exit = True
-        if self._thread:
-            self._thread.join(timeout=timeout)
-            if self._thread.is_alive():
+        with self._lifecycle_lock:
+            thread = self._thread
+            if thread is None:
+                return
+            self._server.should_exit = True
+            thread.join(timeout=timeout)
+            if thread.is_alive():
                 self._server.force_exit = True
-                self._thread.join(timeout=timeout)
+                # A restart must never launch the replacement while the old
+                # API thread still owns the port. Uvicorn exits after force_exit.
+                thread.join()
+            self._thread = None

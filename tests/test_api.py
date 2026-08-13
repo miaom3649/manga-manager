@@ -22,6 +22,19 @@ def test_shared_state_endpoint_has_revision() -> None:
     assert route.endpoint()["revision"] == 0
 
 
+def test_mobile_locale_endpoints_expose_language_pack() -> None:
+    app = create_api()
+    list_route = next(
+        route for route in app.routes if getattr(route, "path", None) == "/api/locales"
+    )
+    pack_route = next(
+        route for route in app.routes if getattr(route, "path", None) == "/api/locales/{code}"
+    )
+
+    assert any(item["code"] == "zh-CN" and item["name"] for item in list_route.endpoint())
+    assert "label.interface_language" in pack_route.endpoint("zh-CN")
+
+
 def test_phone_delete_removes_file_record_and_updates_revision(tmp_path) -> None:
     database = Database(tmp_path / "main.db")
     database.initialize("test")

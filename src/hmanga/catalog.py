@@ -11,9 +11,11 @@ from hmanga.database import AppMeta, Database, FileObservation, Tag, TagGroup, W
 from hmanga.i18n import tr, trf
 from hmanga.text import natural_key, normalize_text, search_terms
 
-AUTHOR_GROUP_NAME = "作者"
+# These values are persisted in existing databases. Keep their Unicode values stable
+# while avoiding locale-specific source literals; user-facing text comes from i18n.
+AUTHOR_GROUP_NAME = "\u4f5c\u8005"
 AUTHOR_GROUP_NORMALIZED = normalize_text(AUTHOR_GROUP_NAME)
-CATEGORY_GROUP_NAME = "类别"
+CATEGORY_GROUP_NAME = "\u7c7b\u522b"
 CATEGORY_GROUP_NORMALIZED = normalize_text(CATEGORY_GROUP_NAME)
 
 
@@ -49,9 +51,8 @@ class CatalogService:
         self._ensure_system_groups()
 
     def _ensure_system_groups(self) -> None:
-        """Keep only the two fixed groups and fold legacy groups into 类别."""
+        """Create the two fixed groups required by the current data model."""
         with self.database.session() as session:
-            groups: dict[str, TagGroup] = {}
             for name, normalized in (
                 (AUTHOR_GROUP_NAME, AUTHOR_GROUP_NORMALIZED),
                 (CATEGORY_GROUP_NAME, CATEGORY_GROUP_NORMALIZED),
@@ -63,42 +64,6 @@ class CatalogService:
                     group = TagGroup(name=name, normalized_name=normalized)
                     session.add(group)
                     session.flush()
-                groups[normalized] = group
-
-            category = groups[CATEGORY_GROUP_NORMALIZED]
-            tags = list(
-                session.scalars(
-                    select(Tag).options(selectinload(Tag.works), selectinload(Tag.group))
-                )
-            )
-            category_tags = {
-                tag.normalized_name: tag for tag in tags if tag.group_id == category.id
-            }
-            for tag in tags:
-                if tag.group and tag.group.normalized_name in {
-                    AUTHOR_GROUP_NORMALIZED,
-                    CATEGORY_GROUP_NORMALIZED,
-                }:
-                    continue
-                target = category_tags.get(tag.normalized_name)
-                if target is None:
-                    tag.group_id = category.id
-                    tag.group_key = category.id
-                    category_tags[tag.normalized_name] = tag
-                    continue
-                existing_work_ids = {work.id for work in target.works}
-                additions = [work for work in tag.works if work.id not in existing_work_ids]
-                target.works.extend(additions)
-                existing_work_ids.update(work.id for work in additions)
-                session.delete(tag)
-            session.flush()
-            session.execute(
-                delete(TagGroup).where(
-                    TagGroup.normalized_name.not_in(
-                        [AUTHOR_GROUP_NORMALIZED, CATEGORY_GROUP_NORMALIZED]
-                    )
-                )
-            )
 
     @property
     def revision(self) -> int:

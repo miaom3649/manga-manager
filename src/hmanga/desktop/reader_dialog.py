@@ -268,8 +268,8 @@ class ReaderDialog(ScreenCenteredDialog):
         if self.resume_page_index is not None:
             self.go_page(self.resume_page_index)
             if self.active_mode == "continuous" and self.continuous_labels:
-                # 图片懒加载会改变前面页面的高度，连续校正几次，确保从当前页
-                # 向前或向后跳转都能稳定落在启动时保存的位置。
+                # Lazy image loading changes the height of preceding pages. Correct
+                # repeatedly so jumps in either direction settle at the saved page.
                 for delay in (0, 50, 150):
                     QTimer.singleShot(delay, self._scroll_to_resume_position)
         self.resume.hide()
@@ -511,8 +511,8 @@ class ReaderDialog(ScreenCenteredDialog):
         return self.jump.hasFocus() or (editor is not None and editor.hasFocus())
 
     def _page_input_finished(self) -> None:
-        # 回车可能触发 editingFinished 但焦点仍在输入框；超时回调会继续
-        # 保持栏显示。真正失焦时从这里重新计算完整的五秒等待。
+        # Enter may trigger editingFinished while the field still has focus. The
+        # timeout keeps the bars visible; real focus loss restarts the full delay.
         self.chrome_hide_timer.start()
 
     def _hide_chrome_if_idle(self) -> None:

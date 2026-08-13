@@ -35,7 +35,7 @@ def test_backup_restore_and_protection(tmp_path) -> None:
     library.configure_root(tmp_path / "library")
     work_id = add_work(database, "备份标题")
     backups = BackupService(database, library)
-    saved = backups.create("手动")
+    saved = backups.create("manual")
     with database.session() as session:
         session.get(Work, work_id).title = "后来修改"
 
@@ -54,9 +54,9 @@ def test_daily_backup_once_and_retention(tmp_path) -> None:
     backups = BackupService(database, library)
     assert backups.automatic_if_due(date(2026, 8, 6)) is not None
     assert backups.automatic_if_due(date(2026, 8, 6)) is None
-    manual = backups.create("手动")
+    manual = backups.create("manual")
     for _ in range(6):
-        backups.create("自动")
+        backups.create("auto")
     assert len(list((tmp_path / "library" / "config-backup").glob("hmanga-auto-*.sqlite"))) == 5
     assert manual.exists()
     assert manual.name.startswith("hmanga-manual-")
@@ -70,7 +70,7 @@ def test_backup_leaves_no_temporary_wal_files(tmp_path) -> None:
     library.configure_root(tmp_path / "library")
     backups = BackupService(database, library)
 
-    backups.create("手动")
+    backups.create("manual")
 
     names = {path.name for path in (tmp_path / "library" / "config-backup").iterdir()}
     assert not any(name.endswith((".tmp", ".tmp-wal", ".tmp-shm")) for name in names)
@@ -82,8 +82,8 @@ def test_delete_all_backups_removes_manual_and_automatic(tmp_path) -> None:
     library = LibraryService(database)
     library.configure_root(tmp_path / "library")
     backups = BackupService(database, library)
-    backups.create("手动")
-    backups.create("自动")
+    backups.create("manual")
+    backups.create("auto")
 
     assert backups.delete_all() == 2
     assert backups.list_backups() == []

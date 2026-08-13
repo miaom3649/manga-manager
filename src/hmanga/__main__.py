@@ -27,7 +27,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     configure_linux_window_positioning()
-    # 延迟导入 Qt，让 Windows 构建流水线可以无窗口启动成品做冒烟检查。
+    # Delay importing Qt so Windows CI can smoke-test the build without a display.
     from hmanga.app import run
 
     return run()

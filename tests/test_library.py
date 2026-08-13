@@ -60,25 +60,7 @@ def test_scan_collects_comics_and_illustrations(tmp_path: Path) -> None:
     database.close()
 
 
-def test_configure_root_migrates_legacy_chinese_directories(tmp_path: Path) -> None:
-    root = tmp_path / "library"
-    (root / "插画").mkdir(parents=True)
-    (root / "备份").mkdir()
-    (root / "插画" / "legacy.png").write_bytes(b"image")
-    (root / "备份" / "legacy.sqlite").write_bytes(b"backup")
-    database = Database(tmp_path / "data.db")
-    database.initialize("test")
-
-    LibraryService(database).configure_root(root)
-
-    assert (root / "illustration" / "legacy.png").is_file()
-    assert (root / "config-backup" / "legacy.sqlite").is_file()
-    assert not (root / "插画").exists()
-    assert not (root / "备份").exists()
-    database.close()
-
-
-def test_scan_uses_naturally_first_image_and_repairs_legacy_default(tmp_path: Path) -> None:
+def test_scan_uses_naturally_first_image_as_default_cover(tmp_path: Path) -> None:
     database, library, root = build_library(tmp_path)
     write_padded_comic_out_of_order(root / "123.zip")
 
@@ -86,11 +68,6 @@ def test_scan_uses_naturally_first_image_and_repairs_legacy_default(tmp_path: Pa
     work = library.list_works()[0]
     assert work.cover_member == "00001.webp"
 
-    # 模拟旧版本按 ZIP 内部存储顺序选择了第一张图。
-    with database.session() as session:
-        session.get(Work, work.id).cover_member = "00007.webp"
-    library.scan()
-    assert library.list_works()[0].cover_member == "00001.webp"
     database.close()
 
 

@@ -58,5 +58,8 @@ class LibraryWatcher:
         self._handler.cancel()
         if self._observer is not None:
             self._observer.stop()
-            self._observer.join(timeout=5)
+            # Watchdog threads are non-daemon threads. Dropping the reference
+            # after a timed join can leave Python alive after every window and
+            # the API server have already closed, so wait for a real shutdown.
+            self._observer.join()
             self._observer = None
