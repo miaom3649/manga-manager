@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PIL import Image
 from PySide6.QtCore import QPoint, QSize, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication, QDialog, QLabel
 
 from hmanga.appearance import AppearanceService
 from hmanga.backup import BackupService
@@ -311,7 +311,11 @@ def test_confirming_work_deletion_keeps_desktop_alive(tmp_path, monkeypatch) -> 
     window.show()
     app.processEvents()
 
-    monkeypatch.setattr(DeleteWorkDialog, "exec", lambda _dialog: 1)
+    monkeypatch.setattr(
+        DeleteWorkDialog,
+        "exec",
+        lambda _dialog: QDialog.DialogCode.Accepted,
+    )
     detail = WorkDetailDialog(work.id, catalog, media, window)
     deletion_requested: list[int] = []
     detail.deletion_requested.connect(deletion_requested.append)
