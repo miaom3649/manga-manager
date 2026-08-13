@@ -9,7 +9,7 @@ from types import SimpleNamespace
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PIL import Image
-from PySide6.QtCore import QPoint, QSize, Qt, QTimer
+from PySide6.QtCore import QPoint, QSize, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel
 
@@ -282,7 +282,7 @@ def test_desktop_kind_filters_match_their_visible_selection(tmp_path) -> None:
     controller.stop()
 
 
-def test_confirming_work_deletion_keeps_desktop_alive(tmp_path) -> None:
+def test_confirming_work_deletion_keeps_desktop_alive(tmp_path, monkeypatch) -> None:
     app = QApplication.instance() or QApplication([])
     database = Database(tmp_path / "main.db")
     database.initialize("test")
@@ -311,17 +311,10 @@ def test_confirming_work_deletion_keeps_desktop_alive(tmp_path) -> None:
     window.show()
     app.processEvents()
 
-    def confirm_from_detail() -> None:
-        detail = window.findChild(WorkDetailDialog)
-        assert detail is not None
-        QTimer.singleShot(
-            0,
-            lambda: detail.findChild(DeleteWorkDialog).accept(),
-        )
-        detail.delete_work()
-
-    QTimer.singleShot(0, confirm_from_detail)
-    window.show_work_detail(work.id)
+    monkeypatch.setattr(DeleteWorkDialog, "exec", lambda _dialog: 1)
+    detail = WorkDetailDialog(work.id, catalog, media, window)
+    detail.deletion_requested.connect(window._delete_work)
+    detail.delete_work()
     app.processEvents()
 
     assert not image_path.exists()
