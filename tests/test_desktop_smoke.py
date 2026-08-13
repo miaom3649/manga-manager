@@ -316,13 +316,14 @@ def test_confirming_work_deletion_keeps_desktop_alive(tmp_path, monkeypatch) -> 
         "exec",
         lambda _dialog: QDialog.DialogCode.Accepted,
     )
-    detail = WorkDetailDialog(work.id, catalog, media, window)
-    deletion_requested: list[int] = []
-    detail.deletion_requested.connect(deletion_requested.append)
-    detail.delete_work()
+
+    def confirm_delete(detail: WorkDetailDialog) -> QDialog.DialogCode:
+        detail.delete_work()
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(WorkDetailDialog, "exec", confirm_delete)
+    window.show_work_detail(work.id)
     app.processEvents()
-    assert deletion_requested == [work.id]
-    window._delete_work(deletion_requested[0])
 
     assert not image_path.exists()
     assert catalog.get_work(work.id) is None

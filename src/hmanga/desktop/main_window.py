@@ -1390,8 +1390,13 @@ class MainWindow(QMainWindow):
             # inside dialog.exec()'s nested event loop, while the confirmation and
             # detail overlays are being torn down.  Perform the destructive work
             # only after exec() has returned below.
-            dialog.deletion_requested.connect(deletion_requested.append)
-            dialog.reading_requested.connect(requested.append)
+            # Use regular Python callbacks instead of connecting Qt signals to
+            # built-in list.append directly. PySide on Windows can classify the
+            # latter as a queued receiver and drop it when the modal closes.
+            dialog.deletion_requested.connect(
+                lambda value, target=deletion_requested: target.append(value)
+            )
+            dialog.reading_requested.connect(lambda value, target=requested: target.append(value))
             dialog.kind_filter_requested.connect(self._filter_kind_from_detail)
             dialog.tag_filter_requested.connect(self._filter_tag_from_detail)
             dialog.exec()
