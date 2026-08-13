@@ -31,7 +31,9 @@ class ApiServer:
             "access_log": False,
             # Desktop exit owns the server lifecycle. Close browser requests
             # immediately instead of waiting for clients to leave.
-            "timeout_graceful_shutdown": 0,
+            # Zero always triggers Uvicorn's timeout branch after its mandatory
+            # 100 ms connection-close pause, even when no request is running.
+            "timeout_graceful_shutdown": 0.5,
         }
         # Disable console logging in windowed builds; keep it in diagnostic builds.
         if sys.stdout is None or sys.stderr is None:

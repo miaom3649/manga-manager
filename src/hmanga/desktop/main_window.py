@@ -856,6 +856,10 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.cache_limit)
         layout.addWidget(clear_cache)
         layout.addStretch(1)
+        self.version_label = QLabel(trf("software.version", version=__version__))
+        self.version_label.setAlignment(Qt.AlignCenter)
+        self.version_label.setStyleSheet("color: palette(mid); padding: 4px;")
+        layout.addWidget(self.version_label)
         reset = QPushButton(tr("action.reset_all_settings"))
         reset.setFixedHeight(46)
         reset.setStyleSheet(
@@ -1070,6 +1074,7 @@ class MainWindow(QMainWindow):
         set_language(self.catalog.database, code)
         self.refresh()
         localize_tree(self)
+        self.version_label.setText(trf("software.version", version=__version__))
         self.language_changed.emit(code)
 
     def restore_backup(self) -> None:

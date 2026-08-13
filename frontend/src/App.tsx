@@ -266,7 +266,7 @@ function NotificationPanel({token,close}:{token:string;close:()=>void}){const no
 </div>
 </Modal>}</Modal>}
 
-function SettingsPanel({token,close,disconnect,languageChanged}:{token:string;close:()=>void;disconnect:()=>void;languageChanged:()=>void}){const[theme,setTheme]=useState(()=>localStorage.getItem("hmanga-theme")??"system");const[language,setLanguage]=useState(()=>localStorage.getItem("hmanga-language")??"zh-CN");const languages=useQuery({queryKey:["locales"],queryFn:()=>api<Language[]>("/api/locales",token)});const device=useQuery({queryKey:["current-device"],queryFn:()=>api<{name:string}>("/api/devices/me",token)});const computer=useQuery({queryKey:["computer"],queryFn:()=>api<{computerName:string}>("/api/library/status",token)});function change(value:string){setTheme(value);localStorage.setItem("hmanga-theme",value);document.documentElement.dataset.theme=value}async function changeLanguage(value:string){const next=await api<Record<string,string>>(`/api/locales/${encodeURIComponent(value)}`,token);localStorage.setItem("hmanga-language",value);setLanguage(value);setMessages(next);languageChanged()}return <Modal close={close}>
+function SettingsPanel({token,close,disconnect,languageChanged}:{token:string;close:()=>void;disconnect:()=>void;languageChanged:()=>void}){const[theme,setTheme]=useState(()=>localStorage.getItem("hmanga-theme")??"system");const[language,setLanguage]=useState(()=>localStorage.getItem("hmanga-language")??"zh-CN");const languages=useQuery({queryKey:["locales"],queryFn:()=>api<Language[]>("/api/locales",token)});const device=useQuery({queryKey:["current-device"],queryFn:()=>api<{name:string}>("/api/devices/me",token)});const computer=useQuery({queryKey:["computer"],queryFn:()=>api<{computerName:string}>("/api/library/status",token)});const version=useQuery({queryKey:["version"],queryFn:()=>api<{version:string}>("/api/version",token)});function change(value:string){setTheme(value);localStorage.setItem("hmanga-theme",value);document.documentElement.dataset.theme=value}async function changeLanguage(value:string){const next=await api<Record<string,string>>(`/api/locales/${encodeURIComponent(value)}`,token);localStorage.setItem("hmanga-language",value);setLanguage(value);setMessages(next);languageChanged()}return <Modal close={close}>
 <CardHeader title={t("label.settings")} close={close}/>
 <div className="settings-stack">
 <div className="info-box">
@@ -287,6 +287,7 @@ function SettingsPanel({token,close,disconnect,languageChanged}:{token:string;cl
 {languages.data?.map(item=><option value={item.code} key={item.code}>{item.name}</option>)}
 </select>
 </label>
+<p className="software-version muted">{tf("software.version",{version:version.data?.version??"…"})}</p>
 <button className="danger-outline" onClick={disconnect}>{t("label.disconnect_current_computer")}</button>
 </div>
 </Modal>}

@@ -4,7 +4,7 @@ import sys
 from importlib.resources import files
 from pathlib import Path
 
-from PySide6.QtCore import QProcess, QTimer
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from hmanga import __version__
@@ -26,6 +26,8 @@ from hmanga.pairing import PairingService
 from hmanga.server import ApiServer
 from hmanga.single_instance import close_instance_server, create_instance_server
 from hmanga.upload import UploadService
+
+RESTART_EXIT_CODE = 75
 
 
 def run() -> int:
@@ -127,13 +129,11 @@ def run() -> int:
             return
         shutdown_started = True
         cleanup()
-        if restart:
-            if getattr(sys, "frozen", False):
-                program, arguments = sys.executable, sys.argv[1:]
-            else:
-                program, arguments = sys.executable, [sys.argv[0], *sys.argv[1:]]
-            QProcess.startDetached(program, arguments)
-        app.quit()
+        # Do not tear down Qt from inside the action signal that initiated the
+        # shutdown. Returning to the event loop first avoids a Linux/Qt case in
+        # which all services stop but QApplication never leaves app.exec().
+        exit_code = RESTART_EXIT_CODE if restart else 0
+        QTimer.singleShot(0, lambda: app.exit(exit_code))
 
     window.request_exit.connect(lambda: shutdown(False))
     window.request_restart.connect(lambda: shutdown(True))
