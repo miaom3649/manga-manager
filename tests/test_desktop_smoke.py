@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PIL import Image
 from PySide6.QtCore import QPoint, QSize, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QLabel
+from PySide6.QtWidgets import QApplication, QLabel
 
 from hmanga.appearance import AppearanceService
 from hmanga.backup import BackupService
@@ -19,7 +19,7 @@ from hmanga.cache import CacheService
 from hmanga.catalog import CatalogQuery, CatalogService
 from hmanga.controller import LibraryController
 from hmanga.database import Database, Notification
-from hmanga.desktop.dialogs import DeleteWorkDialog, WorkDetailDialog
+from hmanga.desktop.dialogs import WorkDetailDialog
 from hmanga.desktop.main_window import MainWindow, TagSummaryWidget
 from hmanga.desktop.reader_dialog import ReaderDialog
 from hmanga.desktop.tag_widgets import AUTHOR_TAG_COLOR
@@ -282,7 +282,7 @@ def test_desktop_kind_filters_match_their_visible_selection(tmp_path) -> None:
     controller.stop()
 
 
-def test_confirming_work_deletion_keeps_desktop_alive(tmp_path, monkeypatch) -> None:
+def test_deleting_work_keeps_desktop_alive(tmp_path) -> None:
     app = QApplication.instance() or QApplication([])
     database = Database(tmp_path / "main.db")
     database.initialize("test")
@@ -311,18 +311,7 @@ def test_confirming_work_deletion_keeps_desktop_alive(tmp_path, monkeypatch) -> 
     window.show()
     app.processEvents()
 
-    monkeypatch.setattr(
-        DeleteWorkDialog,
-        "exec",
-        lambda _dialog: QDialog.DialogCode.Accepted,
-    )
-
-    def confirm_delete(detail: WorkDetailDialog) -> QDialog.DialogCode:
-        detail.delete_work()
-        return QDialog.DialogCode.Accepted
-
-    monkeypatch.setattr(WorkDetailDialog, "exec", confirm_delete)
-    window.show_work_detail(work.id)
+    window._delete_work(work.id)
     app.processEvents()
 
     assert not image_path.exists()
