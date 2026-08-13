@@ -313,9 +313,12 @@ def test_confirming_work_deletion_keeps_desktop_alive(tmp_path, monkeypatch) -> 
 
     monkeypatch.setattr(DeleteWorkDialog, "exec", lambda _dialog: 1)
     detail = WorkDetailDialog(work.id, catalog, media, window)
-    detail.deletion_requested.connect(window._delete_work)
+    deletion_requested: list[int] = []
+    detail.deletion_requested.connect(deletion_requested.append)
     detail.delete_work()
     app.processEvents()
+    assert deletion_requested == [work.id]
+    window._delete_work(deletion_requested[0])
 
     assert not image_path.exists()
     assert catalog.get_work(work.id) is None
