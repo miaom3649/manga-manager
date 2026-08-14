@@ -40,6 +40,28 @@ def test_localization_filter_does_not_queue_deleted_widgets() -> None:
     app.processEvents()
 
 
+def test_localization_filter_blocks_recursive_polish_events(monkeypatch) -> None:
+    from PySide6.QtCore import QEvent
+
+    import hmanga.i18n as i18n
+
+    app = QApplication.instance() or QApplication([])
+    widget = QWidget()
+    event = QEvent(QEvent.Type.Polish)
+    localization = i18n.LocalizationFilter()
+    calls = 0
+
+    def recursively_polish(target: QWidget) -> None:
+        nonlocal calls
+        calls += 1
+        localization.eventFilter(target, event)
+
+    monkeypatch.setattr(i18n, "localize_tree", recursively_polish)
+    assert localization.eventFilter(widget, event) is False
+    assert calls == 1
+    app.processEvents()
+
+
 def test_external_language_pack_can_be_selected(tmp_path) -> None:
     database = Database(tmp_path / "hmanga.db")
     database.initialize("test")

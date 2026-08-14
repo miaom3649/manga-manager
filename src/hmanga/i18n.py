@@ -202,14 +202,24 @@ def localize_tree(root: QWidget) -> None:
 
 
 class LocalizationFilter(QObject):
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._localizing = False
+
     def eventFilter(self, watched, event) -> bool:  # noqa: N802
-        if isinstance(watched, QWidget) and event.type() in {
+        if not self._localizing and isinstance(watched, QWidget) and event.type() in {
             QEvent.Type.Show,
             QEvent.Type.Polish,
         }:
             # Translate synchronously. A queued callback could outlive a
             # temporary QMenu and then access an already deleted C++ object.
-            localize_tree(watched)
+            # Setting text can synchronously generate another Polish event on
+            # Windows, so prevent the nested event from translating again.
+            self._localizing = True
+            try:
+                localize_tree(watched)
+            finally:
+                self._localizing = False
         return super().eventFilter(watched, event)
 
 
