@@ -136,3 +136,11 @@ def test_language_selector_keeps_each_pack_self_name(tmp_path) -> None:
     set_language(database, "zh-CN")
     database.close()
     app.processEvents()
+
+
+def test_missing_bundled_default_catalog_does_not_crash_event_filter(monkeypatch) -> None:
+    import hmanga.i18n as i18n
+
+    monkeypatch.setattr(i18n, "_locale_path", lambda _code: None)
+    assert i18n.language_catalog(i18n.DEFAULT_LANGUAGE) == {}
+    assert i18n._message_key("action.cancel") == "action.cancel"

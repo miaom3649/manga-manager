@@ -70,6 +70,10 @@ def available_languages() -> list[tuple[str, str]]:
 def language_catalog(code: str) -> dict[str, str]:
     """Return one language merged over the complete Simplified Chinese catalog."""
     if _locale_path(code) is None:
+        # Keep startup functional enough to report packaging/configuration
+        # problems instead of raising recursively from Qt's global event filter.
+        if code == DEFAULT_LANGUAGE:
+            return {}
         raise ValueError(f"Unknown language pack: {code}")
     chinese = _read_catalog(DEFAULT_LANGUAGE)
     return chinese if code == DEFAULT_LANGUAGE else chinese | _read_catalog(code)

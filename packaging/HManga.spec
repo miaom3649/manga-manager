@@ -4,6 +4,7 @@ from PyInstaller.utils.hooks import collect_all
 
 project_root = Path(SPECPATH).parent
 web_root = project_root / "src" / "hmanga" / "web"
+locale_root = project_root / "src" / "hmanga" / "locales"
 
 datas = []
 binaries = []
@@ -24,6 +25,8 @@ for package in (
 
 if web_root.exists():
     datas.append((str(web_root), "hmanga/web"))
+if locale_root.exists():
+    datas.append((str(locale_root), "hmanga/locales"))
 
 a = Analysis(
     [str(project_root / "src" / "hmanga" / "__main__.py")],
