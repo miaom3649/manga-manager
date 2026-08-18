@@ -64,6 +64,11 @@ class FloatingCardDialog(QDialog):
         self._overlay_parent = parent
         self._preferred_card_size = card_size or QSize(560, 520)
         self._backdrop_color = QColor(0, 0, 0, backdrop_alpha)
+        # A captured owner background gives the same dimmed-overlay appearance
+        # without relying on native translucent windows. Enabling
+        # WA_TranslucentBackground on a QDialog subclass can make PySide lose
+        # the Python wrapper after Windows recreates the native window.
+        self._backdrop_snapshot = parent.grab() if parent is not None else None
         self.warning_shake = False
         self._shake_animation: QPropertyAnimation | None = None
         super().__init__(parent)
@@ -71,10 +76,6 @@ class FloatingCardDialog(QDialog):
             parent.installEventFilter(self)
         self.setProperty("skipScreenCentering", True)
         self.setWindowFlags(Qt.SubWindow | Qt.FramelessWindowHint)
-        # A parented QDialog with SubWindow is still backed by a native window
-        # on Windows.  An rgba stylesheet alone is then painted as opaque;
-        # enable compositor-backed alpha before applying the overlay color.
-        self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setObjectName("floatingCardOverlay")
         # Keep the native surface transparent and paint the dimming layer
@@ -133,6 +134,10 @@ class FloatingCardDialog(QDialog):
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
         super().paintEvent(event)
         painter = QPainter(self)
+        if self._backdrop_snapshot is not None and not self._backdrop_snapshot.isNull():
+            painter.drawPixmap(self.rect(), self._backdrop_snapshot)
+        else:
+            painter.fillRect(self.rect(), self.palette().window())
         painter.fillRect(self.rect(), self._backdrop_color)
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802

@@ -74,12 +74,14 @@ def test_library_prompt_uses_first_run_copy_only_once(tmp_path) -> None:
     assert _consume_library_prompt_message_key(catalog) == "confirm.library_directory_unset"
 
 
-def test_floating_card_enables_native_window_transparency() -> None:
+def test_floating_card_uses_owner_snapshot_instead_of_native_transparency() -> None:
     _app = QApplication.instance() or QApplication([])
     parent = QWidget()
     dialog = FloatingCardDialog(parent)
 
-    assert dialog.testAttribute(Qt.WA_TranslucentBackground)
+    assert not dialog.testAttribute(Qt.WA_TranslucentBackground)
+    assert dialog._backdrop_snapshot is not None
+    assert not dialog._backdrop_snapshot.isNull()
     assert dialog._backdrop_color.alpha() == 190
     dialog.close()
     parent.close()
