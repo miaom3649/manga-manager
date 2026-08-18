@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import zipfile
+from collections import OrderedDict
 from io import BytesIO
 from pathlib import Path
+from threading import RLock
 
 from PIL import Image, ImageOps, ImageSequence
 
@@ -33,6 +35,8 @@ class MediaService:
         self.cache_dir = cache_dir
         self.thumbnail_dir = cache_dir / "thumbnails"
         self.thumbnail_dir.mkdir(parents=True, exist_ok=True)
+        self._member_cache: OrderedDict[tuple[object, ...], tuple[str, ...]] = OrderedDict()
+        self._member_cache_lock = RLock()
 
     def work_path(self, work: Work) -> Path:
         root = self.library.library_root()
@@ -48,13 +52,29 @@ class MediaService:
     def comic_members(self, work: Work) -> list[str]:
         if work.kind != "comic":
             return []
+        cache_key = (
+            work.relative_path,
+            work.fingerprint,
+            work.file_size,
+            work.modified_ns,
+        )
+        with self._member_cache_lock:
+            cached = self._member_cache.pop(cache_key, None)
+            if cached is not None:
+                self._member_cache[cache_key] = cached
+                return list(cached)
         with zipfile.ZipFile(self.work_path(work)) as archive:
             names = [
                 info.filename
                 for info in archive.infolist()
                 if not info.is_dir() and Path(info.filename).suffix.casefold() in IMAGE_SUFFIXES
             ]
-        return sorted(names, key=natural_key)
+        members = tuple(sorted(names, key=natural_key))
+        with self._member_cache_lock:
+            self._member_cache[cache_key] = members
+            while len(self._member_cache) > 64:
+                self._member_cache.popitem(last=False)
+        return list(members)
 
     def preview_members(self, work: Work) -> list[str]:
         members = self.comic_members(work)

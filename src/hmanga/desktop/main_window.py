@@ -1468,12 +1468,6 @@ class MainWindow(QMainWindow):
             work = self.catalog.get_work(int(value))
             if work is None:
                 return
-            # Keep the expensive main-window widget tree mapped, but make the
-            # top-level window fully transparent while reading. Restoring window
-            # opacity is much cheaper than hide()/show(), which remaps and
-            # repaints every work row on Windows.
-            self.setWindowOpacity(0.0)
-            self.setEnabled(False)
             if self._retired_reader is not None:
                 self._retired_reader.deleteLater()
                 self._retired_reader = None
@@ -1484,6 +1478,11 @@ class MainWindow(QMainWindow):
                     ReaderService(self.catalog.database, self.media),
                     self,
                 )
+                # Prepare the reader first. Member enumeration can touch a slow
+                # ZIP on its first open; hiding the main window before this step
+                # creates a visible blank pause.
+                self.setWindowOpacity(0.0)
+                self.setEnabled(False)
                 reader_dialog.exec()
             finally:
                 # Keep the hidden reader alive until the next reading session.
