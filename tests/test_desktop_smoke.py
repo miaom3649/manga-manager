@@ -96,6 +96,12 @@ def test_star_rating_widget_selects_and_clears_full_rating() -> None:
     rating.buttons[1].click()
     assert rating.value() == 2
     assert [button.text() for button in rating.buttons] == ["★", "★", "☆"]
+    rating.buttons[1].click()
+    assert rating.value() == 0
+    rating.buttons[0].click()
+    assert rating.value() == 1
+    rating.buttons[0].click()
+    assert rating.value() == 0
     rating.buttons[2].click()
     assert rating.value() == 3
     rating.buttons[2].click()

@@ -242,7 +242,7 @@ class StarRatingWidget(QWidget):
         self._refresh_stars()
 
     def _select(self, value: int) -> None:
-        self.setValue(0 if value == 3 and self._rating == 3 else value)
+        self.setValue(0 if value == self._rating else value)
 
     def value(self) -> int:
         return self._rating
