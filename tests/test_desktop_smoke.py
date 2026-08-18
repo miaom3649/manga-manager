@@ -358,7 +358,18 @@ def test_reader_saves_progress_only_when_done() -> None:
     reader = FakeReader()
     work = SimpleNamespace(title="测试", file_name="1.zip", fingerprint="abc")
     dialog = ReaderDialog(work, reader)
+    dialog.show()
     app.processEvents()
+
+    assert dialog.title_bar.width() < dialog.width()
+    assert dialog._is_scrollbar_widget(dialog.scroll.verticalScrollBar())
+    assert dialog._resize_edges(dialog.mapToGlobal(QPoint(0, 0))) == (
+        Qt.LeftEdge | Qt.TopEdge
+    )
+    dialog.toggle_fullscreen()
+    assert dialog.isFullScreen()
+    dialog.toggle_fullscreen()
+    assert not dialog.isFullScreen()
 
     dialog.go_page(2)
     assert reader.saved == []

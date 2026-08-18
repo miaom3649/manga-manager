@@ -18,6 +18,8 @@
   "action.edit": "编辑",
   "action.edit_tag": "编辑 Tag",
   "action.edit_work": "编辑作品",
+  "action.enter_fullscreen": "进入全屏",
+  "action.exit_fullscreen": "退出全屏",
   "action.home_and_clear_filters": "返回首页并清除筛选",
   "action.jump": "跳转",
   "action.jump_to_page": "跳转页码",

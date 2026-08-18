@@ -11,7 +11,9 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QScrollBar,
     QSpinBox,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -200,6 +202,11 @@ class ReaderDialog(ScreenCenteredDialog):
         fit.setProperty("readerBlock", True)
         fit.setMinimumSize(112, 40)
         fit.clicked.connect(self.fit_size)
+        self.fullscreen = QPushButton("⛶")
+        self.fullscreen.setProperty("readerBlock", True)
+        self.fullscreen.setFixedSize(44, 40)
+        self.fullscreen.setToolTip(tr("action.enter_fullscreen"))
+        self.fullscreen.clicked.connect(self.toggle_fullscreen)
         self.jump = QSpinBox()
         self.jump.setObjectName("readerJumpBlock")
         self.jump.setMinimumSize(78, 40)
@@ -214,6 +221,7 @@ class ReaderDialog(ScreenCenteredDialog):
             smaller,
             larger,
             fit,
+            self.fullscreen,
             self.jump,
         ):
             toolbar.addWidget(widget)
@@ -254,6 +262,7 @@ class ReaderDialog(ScreenCenteredDialog):
         self.resume.setMinimumHeight(self.resume.sizeHint().height() + 8)
         self.resume.clicked.connect(self.resume_progress)
         self.resume.hide()
+        self._install_window_resize_filter(self)
         QTimer.singleShot(0, self._layout_chrome)
         QTimer.singleShot(0, self._initial_render)
 
@@ -453,6 +462,16 @@ class ReaderDialog(ScreenCenteredDialog):
         else:
             self.render()
 
+    def toggle_fullscreen(self) -> None:
+        if self.isFullScreen():
+            self.showNormal()
+            self.fullscreen.setText("⛶")
+            self.fullscreen.setToolTip(tr("action.enter_fullscreen"))
+        else:
+            self.showFullScreen()
+            self.fullscreen.setText("❐")
+            self.fullscreen.setToolTip(tr("action.exit_fullscreen"))
+
     def _animate_panel(self, panel: str, visible: bool) -> None:
         if panel == "title":
             widget, animation, target = (
@@ -494,7 +513,11 @@ class ReaderDialog(ScreenCenteredDialog):
         if hasattr(self, "title_animation"):
             self.title_animation.stop()
             self.toolbar_animation.stop()
-        self.title_bar.resize(self.width(), self.TITLE_BAR_HEIGHT)
+        # The vertical scroll bar runs behind the floating title bar. Leave its
+        # complete strip uncovered so grabbing it near the top never starts a
+        # window move instead.
+        scrollbar_width = self.style().pixelMetric(QStyle.PM_ScrollBarExtent)
+        self.title_bar.resize(max(1, self.width() - scrollbar_width), self.TITLE_BAR_HEIGHT)
         self.toolbar_bar.resize(self.width(), self.TOOLBAR_HEIGHT)
         self.title_bar.move(0, 0 if self._chrome_visible else -self.TITLE_BAR_HEIGHT)
         self.toolbar_bar.move(
@@ -532,6 +555,29 @@ class ReaderDialog(ScreenCenteredDialog):
             self.chrome_hide_timer.start()
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        if event.type() == QEvent.Type.ChildAdded:
+            child = event.child()
+            if isinstance(child, QWidget):
+                QTimer.singleShot(
+                    0,
+                    lambda widget=child: self._install_window_resize_filter(widget),
+                )
+        if event.type() == QEvent.Type.MouseMove and not self.isFullScreen():
+            edges = Qt.Edges() if self._is_scrollbar_widget(watched) else self._resize_edges(
+                event.globalPosition().toPoint()
+            )
+            self.setCursor(self._resize_cursor(edges))
+        if (
+            event.type() == QEvent.Type.MouseButtonPress
+            and event.button() == Qt.LeftButton
+            and not self.isFullScreen()
+            and not self._is_scrollbar_widget(watched)
+        ):
+            edges = self._resize_edges(event.globalPosition().toPoint())
+            handle = self.windowHandle()
+            if edges and handle is not None and handle.startSystemResize(edges):
+                event.accept()
+                return True
         if watched is self.scroll.viewport() and event.type() == QEvent.Type.MouseButtonPress:
             if event.button() == Qt.LeftButton:
                 self._content_press_position = event.position().toPoint()
@@ -554,6 +600,48 @@ class ReaderDialog(ScreenCenteredDialog):
                 event.accept()
                 return True
         return super().eventFilter(watched, event)
+
+    def _install_window_resize_filter(self, widget: QWidget) -> None:
+        widget.setMouseTracking(True)
+        widget.installEventFilter(self)
+        for child in widget.findChildren(QWidget):
+            child.setMouseTracking(True)
+            child.installEventFilter(self)
+
+    def _resize_edges(self, global_position: QPoint) -> Qt.Edges:
+        local = self.mapFromGlobal(global_position)
+        margin = 8
+        edges = Qt.Edges()
+        if local.x() <= margin:
+            edges |= Qt.LeftEdge
+        elif local.x() >= self.width() - margin:
+            edges |= Qt.RightEdge
+        if local.y() <= margin:
+            edges |= Qt.TopEdge
+        elif local.y() >= self.height() - margin:
+            edges |= Qt.BottomEdge
+        return edges
+
+    @staticmethod
+    def _resize_cursor(edges: Qt.Edges) -> Qt.CursorShape:
+        if edges in (Qt.LeftEdge | Qt.TopEdge, Qt.RightEdge | Qt.BottomEdge):
+            return Qt.SizeFDiagCursor
+        if edges in (Qt.RightEdge | Qt.TopEdge, Qt.LeftEdge | Qt.BottomEdge):
+            return Qt.SizeBDiagCursor
+        if edges & (Qt.LeftEdge | Qt.RightEdge):
+            return Qt.SizeHorCursor
+        if edges & (Qt.TopEdge | Qt.BottomEdge):
+            return Qt.SizeVerCursor
+        return Qt.ArrowCursor
+
+    @staticmethod
+    def _is_scrollbar_widget(watched) -> bool:
+        widget = watched if isinstance(watched, QWidget) else None
+        while widget is not None:
+            if isinstance(widget, QScrollBar):
+                return True
+            widget = widget.parentWidget()
+        return False
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
