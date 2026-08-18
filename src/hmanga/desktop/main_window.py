@@ -4,6 +4,7 @@ import json
 import math
 import shutil
 import sys
+from functools import partial
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QEvent, QSize, Qt, QTimer, Signal
@@ -296,6 +297,7 @@ class MainWindow(QMainWindow):
         self.search_timer.setInterval(400)
         self.search_timer.timeout.connect(self.refresh_works)
         self._catalog_revision = catalog.revision
+        self._thumbnail_generation = 0
         self.sync_timer = QTimer(self)
         self.sync_timer.setInterval(500)
         self.sync_timer.timeout.connect(self._sync_catalog_revision)
@@ -1258,6 +1260,8 @@ class MainWindow(QMainWindow):
         show_message(self, tr("label.notification_details"), text or tr("label.no_file_details"))
 
     def refresh_works(self) -> None:
+        self._thumbnail_generation += 1
+        thumbnail_generation = self._thumbnail_generation
         page = self.catalog.query(
             CatalogQuery(
                 text=self.search_edit.text(),
@@ -1276,7 +1280,7 @@ class MainWindow(QMainWindow):
         self.work_list.clear()
         self._animated_movies: list[QMovie] = []
         all_tags = self.catalog.list_tags()
-        for work in page.items:
+        for work_index, work in enumerate(page.items):
             kind = tr("label.comic") if work.kind == "comic" else tr("label.illustration")
             display_title = work.title or Path(work.file_name).stem
             identity = work.number if work.kind == "comic" else work.file_name
@@ -1320,17 +1324,16 @@ class MainWindow(QMainWindow):
             shadow.setOffset(0, 6)
             shadow.setColor(QColor(0, 0, 0, 120))
             image.setGraphicsEffect(shadow)
-            try:
-                thumbnail = self.media.thumbnail(work, 102, 108)
-                if work.kind == "illustration" and thumbnail.suffix == ".gif":
-                    movie = QMovie(str(thumbnail))
-                    image.setMovie(movie)
-                    self._animated_movies.append(movie)
-                    movie.start()
-                else:
-                    image.setPixmap(QPixmap(str(thumbnail)))
-            except Exception:
-                image.setText(tr("label.no_cover"))
+            image.setText("…")
+            QTimer.singleShot(
+                work_index * 12,
+                partial(
+                    self._load_work_thumbnail,
+                    work,
+                    image,
+                    thumbnail_generation,
+                ),
+            )
             row_layout.addWidget(image)
             text_widget = QWidget()
             text_layout = QVBoxLayout(text_widget)
@@ -1355,6 +1358,39 @@ class MainWindow(QMainWindow):
         self.previous_page.setEnabled(page.page > 1)
         self.next_page.setEnabled(page.page < page.pages)
         self.last_page.setEnabled(page.page < page.pages)
+
+    def _load_work_thumbnail(
+        self,
+        work,
+        image: QLabel,
+        generation: int,
+    ) -> None:
+        if generation != self._thumbnail_generation:
+            return
+        if (
+            not self.isVisible()
+            or self.pages.currentIndex() != 0
+            or self._has_visible_dialog()
+        ):
+            QTimer.singleShot(
+                120,
+                partial(self._load_work_thumbnail, work, image, generation),
+            )
+            return
+        try:
+            thumbnail = self.media.thumbnail(work, 102, 108)
+            if generation != self._thumbnail_generation:
+                return
+            if work.kind == "illustration" and thumbnail.suffix == ".gif":
+                movie = QMovie(str(thumbnail))
+                image.setMovie(movie)
+                self._animated_movies.append(movie)
+                movie.start()
+            else:
+                image.setPixmap(QPixmap(str(thumbnail)))
+        except (OSError, RuntimeError, ValueError):
+            if generation == self._thumbnail_generation:
+                image.setText(tr("label.no_cover"))
 
     def _search_changed(self) -> None:
         self.current_page = 1
@@ -1404,11 +1440,13 @@ class MainWindow(QMainWindow):
 
     def show_work_detail(self, work_id: int) -> None:
         """Run details and reader sequentially so no hidden modal blocks the main window."""
+        dialog = WorkDetailDialog(work_id, self.catalog, self.media, self)
         while True:
-            dialog = WorkDetailDialog(work_id, self.catalog, self.media, self)
+            dialog.requested_action = None
             dialog.exec()
             if dialog.metadata_changed:
                 self.refresh_works()
+                dialog.metadata_changed = False
             action = dialog.requested_action
             if action is None:
                 return
@@ -1553,7 +1591,10 @@ class MainWindow(QMainWindow):
         self.scan_status.setText(tr("status.scanning_and_validating"))
 
     def _scan_finished(self, result: ScanResult) -> None:
-        if result.added or result.missing or result.renamed or result.replacements:
+        library_changed = bool(
+            result.added or result.missing or result.renamed or result.replacements
+        )
+        if library_changed:
             self.catalog.notify_library_changed()
         self.scan_status.setText(
             trf(
@@ -1564,7 +1605,9 @@ class MainWindow(QMainWindow):
                 invalid=len(result.invalid),
             )
         )
-        self.refresh()
+        self.refresh_button.setEnabled(self.library.library_root() is not None)
+        if library_changed:
+            self.refresh()
         if result.replacements:
             self.resolve_replacements()
         if not self._startup_backup_checked:

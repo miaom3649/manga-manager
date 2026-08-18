@@ -42,6 +42,7 @@ class FakeReader:
         Image.new("RGB", (12, 18), "navy").save(output, "PNG")
         self.image = output.getvalue()
         self.saved: list[tuple[int, int]] = []
+        self.page_reads: list[str] = []
 
     def members(self, work) -> list[str]:
         return ["1.webp", "2.webp", "3.webp"]
@@ -56,6 +57,7 @@ class FakeReader:
         pass
 
     def page(self, work, member: str) -> bytes:
+        self.page_reads.append(member)
         return self.image
 
     def save_progress(self, work, page_index: int, page_offset: int = 0) -> None:
@@ -370,6 +372,9 @@ def test_reader_saves_progress_only_when_done() -> None:
     assert dialog.isFullScreen()
     dialog.toggle_fullscreen()
     assert not dialog.isFullScreen()
+    reads_before_render = len(reader.page_reads)
+    dialog.render()
+    assert len(reader.page_reads) == reads_before_render
 
     dialog.go_page(2)
     assert reader.saved == []

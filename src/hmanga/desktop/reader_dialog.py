@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from io import BytesIO
 
 from PIL import Image
-from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QEasingCurve,
+    QEvent,
+    QPoint,
+    QPropertyAnimation,
+    QSignalBlocker,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import QCursor, QImage, QKeyEvent, QMouseEvent, QPixmap, QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
@@ -120,6 +130,7 @@ class ReaderDialog(ScreenCenteredDialog):
         self.zoom = 1.0
         self.wheel_delta = 0
         self._progress_saved = False
+        self._page_pixmap_cache: OrderedDict[str, QPixmap] = OrderedDict()
         self.continuous_labels: list[QLabel] = []
         self.setWindowTitle(work.title or work.file_name)
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
@@ -247,6 +258,10 @@ class ReaderDialog(ScreenCenteredDialog):
         self.chrome_hide_timer.setSingleShot(True)
         self.chrome_hide_timer.setInterval(5000)
         self.chrome_hide_timer.timeout.connect(self._hide_chrome_if_idle)
+        self.resize_refit_timer = QTimer(self)
+        self.resize_refit_timer.setSingleShot(True)
+        self.resize_refit_timer.setInterval(140)
+        self.resize_refit_timer.timeout.connect(self._refit_after_resize)
         self.proximity_timer = QTimer(self)
         self.proximity_timer.setInterval(100)
         self.proximity_timer.timeout.connect(self._check_panel_proximity)
@@ -296,8 +311,7 @@ class ReaderDialog(ScreenCenteredDialog):
             self.image.setText(tr("label.archive_has_no_readable_images"))
             return
         try:
-            data = self.reader.page(self.work, self.members[self.page_index])
-            pixmap = pixmap_from_bytes(data)
+            pixmap = self._page_pixmap(self.members[self.page_index])
         except Exception as exc:
             self.image.setText(trf("reader.page_unreadable", page=self.page_index + 1, error=exc))
             self.position.setText(f"{self.page_index + 1}/{len(self.members)}")
@@ -305,6 +319,17 @@ class ReaderDialog(ScreenCenteredDialog):
         pixmap = self._scaled_to_viewport(pixmap)
         self.image.setPixmap(pixmap)
         self._update_position_controls()
+
+    def _page_pixmap(self, member: str) -> QPixmap:
+        cached = self._page_pixmap_cache.pop(member, None)
+        if cached is not None:
+            self._page_pixmap_cache[member] = cached
+            return cached
+        pixmap = pixmap_from_bytes(self.reader.page(self.work, member))
+        self._page_pixmap_cache[member] = pixmap
+        while len(self._page_pixmap_cache) > 3:
+            self._page_pixmap_cache.popitem(last=False)
+        return pixmap
 
     def _update_mode_button_text(self) -> None:
         self.mode.setText(
@@ -368,8 +393,19 @@ class ReaderDialog(ScreenCenteredDialog):
     def update_continuous_pages(self) -> None:
         if not self.continuous_labels:
             return
-        top = self.scroll.verticalScrollBar().value()
+        scroll_bar = self.scroll.verticalScrollBar()
+        top = scroll_bar.value()
         height = self.scroll.viewport().height()
+        anchor_index = max(
+            (
+                index
+                for index, label in enumerate(self.continuous_labels)
+                if label.y() <= top
+            ),
+            default=0,
+        )
+        anchor_offset = max(0, top - self.continuous_labels[anchor_index].y())
+        heights_changed = False
         for label in self.continuous_labels:
             label_top = label.y()
             label_bottom = label_top + label.height()
@@ -378,18 +414,33 @@ class ReaderDialog(ScreenCenteredDialog):
                 index = int(label.property("page_index"))
                 try:
                     pixmap = self._scaled_to_viewport(
-                        pixmap_from_bytes(self.reader.page(self.work, self.members[index]))
+                        self._page_pixmap(self.members[index])
                     )
                     label.setPixmap(pixmap)
+                    heights_changed |= label.height() != pixmap.height()
                     label.setFixedHeight(pixmap.height())
+                    label.setProperty("page_height", pixmap.height())
                     label.setProperty("loaded", True)
                 except Exception as exc:
                     label.setText(trf("reader.page_failed", page=index + 1, error=exc))
             elif not visible_nearby and label.property("loaded"):
                 label.clear()
                 label.setText(trf("reader.page_number", page=int(label.property("page_index")) + 1))
-                label.setFixedHeight(700)
+                # Retain the measured page height. Resetting it to a generic
+                # placeholder changes the entire scroll range and causes the
+                # viewport to jump backwards while the user is scrolling.
+                known_height = label.property("page_height")
+                if known_height:
+                    label.setFixedHeight(int(known_height))
                 label.setProperty("loaded", False)
+        if heights_changed:
+            container = self.scroll.widget()
+            if container is not None and container.layout() is not None:
+                container.layout().activate()
+            blocker = QSignalBlocker(scroll_bar)
+            anchor = self.continuous_labels[anchor_index]
+            scroll_bar.setValue(anchor.y() + min(anchor_offset, max(0, anchor.height() - 1)))
+            del blocker
         self.page_index = self._detect_continuous_page()
         self._update_position_controls()
 
@@ -430,8 +481,7 @@ class ReaderDialog(ScreenCenteredDialog):
     def change_zoom(self, multiplier: float) -> None:
         self.zoom = min(4.0, max(0.2, self.zoom * multiplier))
         if self.active_mode == "continuous":
-            for label in self.continuous_labels:
-                label.setProperty("loaded", False)
+            self._invalidate_continuous_pages()
             self.update_continuous_pages()
         else:
             self.render()
@@ -456,8 +506,7 @@ class ReaderDialog(ScreenCenteredDialog):
     def fit_size(self) -> None:
         self.zoom = 1.0
         if self.active_mode == "continuous":
-            for label in self.continuous_labels:
-                label.setProperty("loaded", False)
+            self._invalidate_continuous_pages()
             self.update_continuous_pages()
         else:
             self.render()
@@ -647,15 +696,24 @@ class ReaderDialog(ScreenCenteredDialog):
         super().resizeEvent(event)
         if hasattr(self, "scroll"):
             self._layout_chrome()
-            QTimer.singleShot(0, self._refit_after_resize)
+            if hasattr(self, "resize_refit_timer"):
+                self.resize_refit_timer.start()
 
     def _refit_after_resize(self) -> None:
         if self.active_mode == "continuous":
-            for label in self.continuous_labels:
-                label.setProperty("loaded", False)
+            self._invalidate_continuous_pages()
             self.update_continuous_pages()
         else:
             self.render()
+
+    def _invalidate_continuous_pages(self) -> None:
+        for label in self.continuous_labels:
+            if label.property("loaded"):
+                label.clear()
+                label.setText(
+                    trf("reader.page_number", page=int(label.property("page_index")) + 1)
+                )
+            label.setProperty("loaded", False)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
         if self.active_mode == "single":
