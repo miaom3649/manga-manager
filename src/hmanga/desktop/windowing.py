@@ -1,7 +1,15 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QPropertyAnimation, QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QCursor, QGuiApplication, QMouseEvent, QShowEvent
+from PySide6.QtGui import (
+    QColor,
+    QCursor,
+    QGuiApplication,
+    QMouseEvent,
+    QPainter,
+    QPaintEvent,
+    QShowEvent,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -55,6 +63,7 @@ class FloatingCardDialog(QDialog):
     ) -> None:
         self._overlay_parent = parent
         self._preferred_card_size = card_size or QSize(560, 520)
+        self._backdrop_color = QColor(0, 0, 0, backdrop_alpha)
         self.warning_shake = False
         self._shake_animation: QPropertyAnimation | None = None
         super().__init__(parent)
@@ -68,9 +77,10 @@ class FloatingCardDialog(QDialog):
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setObjectName("floatingCardOverlay")
-        self.setStyleSheet(
-            f"QDialog#floatingCardOverlay {{ background-color: rgba(0, 0, 0, {backdrop_alpha}); }}"
-        )
+        # Keep the native surface transparent and paint the dimming layer
+        # ourselves. Qt's stylesheet alpha is handled differently by the
+        # Windows and X11 compositors when this dialog is a native subwindow.
+        self.setStyleSheet("QDialog#floatingCardOverlay { background: transparent; }")
 
         overlay = QVBoxLayout(self)
         overlay.setContentsMargins(24, 24, 24, 24)
@@ -119,6 +129,11 @@ class FloatingCardDialog(QDialog):
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
         self._resize_card_to_overlay()
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), self._backdrop_color)
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802
         if watched is self._overlay_parent and event.type() in {

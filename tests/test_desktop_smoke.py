@@ -80,6 +80,7 @@ def test_floating_card_enables_native_window_transparency() -> None:
     dialog = FloatingCardDialog(parent)
 
     assert dialog.testAttribute(Qt.WA_TranslucentBackground)
+    assert dialog._backdrop_color.alpha() == 190
     dialog.close()
     parent.close()
 
