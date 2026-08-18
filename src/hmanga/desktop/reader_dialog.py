@@ -726,6 +726,9 @@ class ReaderDialog(ScreenCenteredDialog):
         super().keyPressEvent(event)
 
     def done(self, result: int) -> None:
+        self.proximity_timer.stop()
+        self.chrome_hide_timer.stop()
+        self.resize_refit_timer.stop()
         if not self._progress_saved and self.members:
             offset = 0
             if self.active_mode == "continuous" and self.continuous_labels:

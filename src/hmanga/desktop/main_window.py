@@ -7,7 +7,7 @@ import sys
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QEvent, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QByteArray, QEvent, QEventLoop, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
@@ -298,6 +298,7 @@ class MainWindow(QMainWindow):
         self.search_timer.timeout.connect(self.refresh_works)
         self._catalog_revision = catalog.revision
         self._thumbnail_generation = 0
+        self._retired_reader: ReaderDialog | None = None
         self.sync_timer = QTimer(self)
         self.sync_timer.setInterval(500)
         self.sync_timer.timeout.connect(self._sync_catalog_revision)
@@ -1443,6 +1444,13 @@ class MainWindow(QMainWindow):
         dialog = WorkDetailDialog(work_id, self.catalog, self.media, self)
         while True:
             dialog.requested_action = None
+            dialog.show()
+            app = QApplication.instance()
+            if app is not None:
+                # Paint the restored main window and existing detail card before
+                # entering another nested dialog loop. Thumbnail timers see the
+                # visible card and remain paused during this short flush.
+                app.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
             dialog.exec()
             if dialog.metadata_changed:
                 self.refresh_works()
@@ -1467,9 +1475,21 @@ class MainWindow(QMainWindow):
             if work is None:
                 return
             self.hide()
+            if self._retired_reader is not None:
+                self._retired_reader.deleteLater()
+                self._retired_reader = None
+            reader_dialog = ReaderDialog(
+                work,
+                ReaderService(self.catalog.database, self.media),
+                self,
+            )
             try:
-                ReaderDialog(work, ReaderService(self.catalog.database, self.media), self).exec()
+                reader_dialog.exec()
             finally:
+                # Keep the hidden reader alive until the next reading session.
+                # Destroying hundreds of page widgets here blocks restoration of
+                # the main window and detail card on both Windows and Linux.
+                self._retired_reader = reader_dialog
                 self.show()
                 self.raise_()
                 self.activateWindow()
