@@ -1,4 +1,5 @@
 .venv/
+.venv-win/
 .tools/
 packaging/ChineseSimplified.isl
 __pycache__/
