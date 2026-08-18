@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import partial
 
-from PySide6.QtCore import QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QSize, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QCloseEvent, QColor, QMouseEvent, QMovie, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
@@ -558,12 +558,6 @@ class UploadResultDialog(FloatingCardDialog):
 
 
 class WorkDetailDialog(FloatingCardDialog):
-    saved = Signal()
-    deletion_requested = Signal(int)
-    reading_requested = Signal(int)
-    kind_filter_requested = Signal(str)
-    tag_filter_requested = Signal(int, str)
-
     def __init__(self, work_id: int, catalog: CatalogService, media: MediaService, parent=None):
         super().__init__(parent, card_size=QSize(760, 760))
         self.work_id = work_id
@@ -572,6 +566,8 @@ class WorkDetailDialog(FloatingCardDialog):
         self.work: Work | None = None
         self.editing = False
         self.selected_tags: set[int] = set()
+        self.requested_action: tuple[str, int | str, str | None] | None = None
+        self.metadata_changed = False
         self._catalog_revision = catalog.revision
         self.setWindowTitle(tr("label.work_detail"))
         detail_content = QWidget()
@@ -722,30 +718,33 @@ class WorkDetailDialog(FloatingCardDialog):
         self.root.addWidget(remove)
         self.root.addStretch(1)
 
+    @Slot()
     def _sync_catalog_revision(self) -> None:
         if self.editing or self.catalog.revision == self._catalog_revision:
             return
         self.render_view()
 
+    @Slot()
     def delete_work(self) -> None:
         assert self.work is not None
         if DeleteWorkDialog(self.work.file_name, self).exec() != QDialog.Accepted:
             return
-        self.deletion_requested.emit(self.work.id)
+        self.requested_action = ("delete", self.work.id, None)
         self.accept()
 
     def filter_by_kind(self, kind: str) -> None:
-        self.kind_filter_requested.emit(kind)
+        self.requested_action = ("filter_kind", kind, None)
         self.accept()
 
     def filter_by_tag(self, tag_id: int) -> None:
         assert self.work is not None
-        self.tag_filter_requested.emit(tag_id, self.work.kind)
+        self.requested_action = ("filter_tag", tag_id, self.work.kind)
         self.accept()
 
+    @Slot()
     def start_reading(self) -> None:
         assert self.work is not None
-        self.reading_requested.emit(self.work.id)
+        self.requested_action = ("read", self.work.id, None)
         self.accept()
 
     def show_large_preview(self, work: Work, member: str) -> None:
@@ -765,9 +764,11 @@ class WorkDetailDialog(FloatingCardDialog):
         except Exception:
             self.large_preview.hide()
 
+    @Slot()
     def hide_large_preview(self) -> None:
         self.large_preview.hide()
 
+    @Slot()
     def render_edit(self) -> None:
         assert self.work is not None
         self.editing = True
@@ -874,7 +875,7 @@ class WorkDetailDialog(FloatingCardDialog):
             tag_ids=list(self.selected_tags),
             cover_member=self.pending_cover,
         )
-        self.saved.emit()
+        self.metadata_changed = True
         self.render_view()
 
     def _has_unsaved_edits(self) -> bool:

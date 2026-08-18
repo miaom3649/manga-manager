@@ -74,7 +74,7 @@ def test_library_prompt_uses_first_run_copy_only_once(tmp_path) -> None:
     assert _consume_library_prompt_message_key(catalog) == "confirm.library_directory_unset"
 
 
-def test_floating_card_uses_owner_snapshot_instead_of_native_transparency() -> None:
+def test_floating_card_uses_owner_snapshot_without_native_transparency() -> None:
     _app = QApplication.instance() or QApplication([])
     parent = QWidget()
     dialog = FloatingCardDialog(parent)
@@ -151,6 +151,9 @@ def test_full_desktop_window_constructs(tmp_path) -> None:
     QTest.qWait(600)
     assert any(label.text() == "普通" for label in detail.findChildren(QLabel))
     detail.close()
+    read_detail = WorkDetailDialog(illustration.id, catalog, media, window)
+    read_detail.start_reading()
+    assert read_detail.requested_action == ("read", illustration.id, None)
     assert all(
         button.property("tagId") not in {author_tag.id, second_author_tag.id}
         for button in window.custom_tag_buttons
