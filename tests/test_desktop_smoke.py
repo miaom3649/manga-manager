@@ -217,6 +217,9 @@ def test_full_desktop_window_constructs(tmp_path) -> None:
     assert window.work_list.count() == 1
     assert window.work_list.item(0).text() == ""
     assert window.work_list.itemWidget(window.work_list.item(0)) is not None
+    cached_row = window.work_list.itemWidget(window.work_list.item(0))
+    window.refresh_works()
+    assert window.work_list.itemWidget(window.work_list.item(0)) is cached_row
     window.work_list.setCurrentRow(0)
     selected_row = window.work_list.itemWidget(window.work_list.item(0))
     tag_summary = selected_row.findChild(TagSummaryWidget)
