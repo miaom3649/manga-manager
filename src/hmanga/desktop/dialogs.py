@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -215,6 +214,47 @@ class FlowTagWidget(QWidget):
             x += hint.width() + spacing
             row_height = max(row_height, hint.height())
         self.setMinimumHeight(y + row_height)
+
+
+class StarRatingWidget(QWidget):
+    """Compact three-star editor with a full-rating clear gesture."""
+
+    def __init__(self, rating: int = 0, parent=None) -> None:
+        super().__init__(parent)
+        self._rating = min(3, max(0, rating))
+        self.buttons: list[QPushButton] = []
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        for value in range(1, 4):
+            button = QPushButton()
+            button.setFixedSize(42, 38)
+            button.setCursor(Qt.PointingHandCursor)
+            button.setStyleSheet(
+                "QPushButton { background: transparent; color: #d2a928; border: none; "
+                "font-size: 28px; padding: 0; } "
+                "QPushButton:hover { color: #f0c84b; }"
+            )
+            button.clicked.connect(partial(self._select, value))
+            self.buttons.append(button)
+            layout.addWidget(button)
+        layout.addStretch(1)
+        self._refresh_stars()
+
+    def _select(self, value: int) -> None:
+        self.setValue(0 if value == 3 and self._rating == 3 else value)
+
+    def value(self) -> int:
+        return self._rating
+
+    def setValue(self, rating: int) -> None:  # noqa: N802
+        self._rating = min(3, max(0, rating))
+        self._refresh_stars()
+
+    def _refresh_stars(self) -> None:
+        for value, button in enumerate(self.buttons, start=1):
+            button.setText("★" if value <= self._rating else "☆")
+            button.setToolTip(trf("rating.exact", rating=value))
 
 
 class ClickableTagLabel(QLabel):
@@ -775,11 +815,9 @@ class WorkDetailDialog(FloatingCardDialog):
         _clear_layout(self.root)
         form = QFormLayout()
         self.title_edit = QLineEdit(self.work.title or "")
-        self.rating_edit = QSpinBox()
-        self.rating_edit.setRange(0, 3)
-        self.rating_edit.setValue(self.work.rating)
+        self.rating_edit = StarRatingWidget(self.work.rating)
         form.addRow(tr("label.title"), self.title_edit)
-        form.addRow(tr("label.rating_zero_to_three"), self.rating_edit)
+        form.addRow(tr("label.rating"), self.rating_edit)
         self.root.addLayout(form)
         self.tag_search_edit = QLineEdit()
         self.tag_search_edit.setPlaceholderText(tr("label.search_tags_or_groups"))

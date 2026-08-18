@@ -19,7 +19,7 @@ from hmanga.cache import CacheService
 from hmanga.catalog import CatalogQuery, CatalogService
 from hmanga.controller import LibraryController
 from hmanga.database import Database, Notification
-from hmanga.desktop.dialogs import WorkDetailDialog
+from hmanga.desktop.dialogs import StarRatingWidget, WorkDetailDialog
 from hmanga.desktop.main_window import (
     MainWindow,
     TagSummaryWidget,
@@ -87,6 +87,20 @@ def test_floating_card_uses_owner_snapshot_without_native_transparency() -> None
     assert dialog._backdrop_color.alpha() == 190
     dialog.close()
     parent.close()
+
+
+def test_star_rating_widget_selects_and_clears_full_rating() -> None:
+    _app = QApplication.instance() or QApplication([])
+    rating = StarRatingWidget(0)
+
+    rating.buttons[1].click()
+    assert rating.value() == 2
+    assert [button.text() for button in rating.buttons] == ["★", "★", "☆"]
+    rating.buttons[2].click()
+    assert rating.value() == 3
+    rating.buttons[2].click()
+    assert rating.value() == 0
+    assert [button.text() for button in rating.buttons] == ["☆", "☆", "☆"]
 
 
 def test_full_desktop_window_constructs(tmp_path) -> None:

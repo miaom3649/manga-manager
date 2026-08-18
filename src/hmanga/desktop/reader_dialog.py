@@ -14,7 +14,15 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QCursor, QImage, QKeyEvent, QMouseEvent, QPixmap, QResizeEvent
+from PySide6.QtGui import (
+    QCursor,
+    QImage,
+    QKeyEvent,
+    QMouseEvent,
+    QPixmap,
+    QResizeEvent,
+    QWheelEvent,
+)
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QHBoxLayout,
@@ -112,6 +120,16 @@ class ReaderTitleBar(QWidget):
                 self.window().showNormal()
             else:
                 self.window().showMaximized()
+
+
+class ReaderPageSpinBox(QSpinBox):
+    """Page input whose wheel direction follows forward reading."""
+
+    def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
+        delta = event.angleDelta().y() or event.pixelDelta().y()
+        if delta:
+            self.setValue(self.value() + (1 if delta < 0 else -1))
+        event.accept()
 
 
 class ReaderDialog(ScreenCenteredDialog):
@@ -218,7 +236,7 @@ class ReaderDialog(ScreenCenteredDialog):
         self.fullscreen.setFixedSize(44, 40)
         self.fullscreen.setToolTip(tr("action.enter_fullscreen"))
         self.fullscreen.clicked.connect(self.toggle_fullscreen)
-        self.jump = QSpinBox()
+        self.jump = ReaderPageSpinBox()
         self.jump.setObjectName("readerJumpBlock")
         self.jump.setMinimumSize(78, 40)
         self.jump.setRange(1, max(1, len(self.members)))

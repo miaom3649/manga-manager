@@ -103,8 +103,8 @@ function DetailView({id,token,back,read,filter}:{id:number;token:string;back:()=
 </div>}<div className="detail-body">{editing?<>
 <label>{t("label.title")}<input value={title} onChange={e=>setTitle(e.target.value)}/>
 </label>
-<label>{t("label.rating_zero_to_three")}<div className="rating-picker">{[0,1,2,3].map(value=>
-<button key={value} className={rating===value?"selected":""} onClick={()=>setRating(value)}>{value===0?t("label.unrated"):"★".repeat(value)}</button>)}</div>
+<label>{t("label.rating")}<div className="rating-picker">{[1,2,3].map(value=>
+<button key={value} className={value<=rating?"selected":""} onClick={()=>setRating(current=>value===3&&current===3?0:value)}>{value<=rating?"★":"☆"}</button>)}</div>
 </label>
 <input className="edit-tag-search" placeholder={t("label.search_tags_or_groups")} value={tagSearch} onChange={e=>setTagSearch(e.target.value)}/>
 <div className="tag-grid edit-tags">{tags.data?.filter(tag=>tag.name.toLocaleLowerCase().includes(tagSearch.trim().toLocaleLowerCase())).sort((a,b)=>Number(!isAuthor(a))-Number(!isAuthor(b))||b.name.length-a.name.length).map(tag=>
