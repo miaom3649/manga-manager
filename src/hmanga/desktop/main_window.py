@@ -1472,27 +1472,19 @@ class MainWindow(QMainWindow):
                 self._retired_reader.deleteLater()
                 self._retired_reader = None
             reader_dialog: ReaderDialog | None = None
-            conceal_timer: QTimer | None = None
             try:
                 reader_dialog = ReaderDialog(
                     work,
                     ReaderService(self.catalog.database, self.media),
                     self,
                 )
-                # Enter the reader event loop before concealing the main window.
-                # On Windows, a newly shown native window is not composited until
-                # the next event-loop turn; concealing first creates a brief blank
-                # desktop flash even though construction has already completed.
-                conceal_timer = QTimer(reader_dialog)
-                conceal_timer.setSingleShot(True)
-                conceal_timer.setInterval(30)
-                conceal_timer.timeout.connect(self._conceal_main_for_reader)
-                reader_dialog.show()
-                conceal_timer.start()
+                # Prepare the reader first. Member enumeration can touch a slow
+                # ZIP on its first open; hiding the main window before this step
+                # creates a visible blank pause.
+                self.setWindowOpacity(0.0)
+                self.setEnabled(False)
                 reader_dialog.exec()
             finally:
-                if conceal_timer is not None:
-                    conceal_timer.stop()
                 # Keep the hidden reader alive until the next reading session.
                 # Destroying hundreds of page widgets here blocks restoration of
                 # the main window and detail card on both Windows and Linux.
@@ -1502,10 +1494,6 @@ class MainWindow(QMainWindow):
                 self.setWindowOpacity(1.0)
                 self.raise_()
                 self.activateWindow()
-
-    def _conceal_main_for_reader(self) -> None:
-        self.setWindowOpacity(0.0)
-        self.setEnabled(False)
 
     def _delete_work(self, work_id: int) -> None:
         """Delete after the nested detail dialogs have completely unwound."""
