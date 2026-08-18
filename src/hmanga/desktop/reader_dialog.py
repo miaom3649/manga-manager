@@ -279,7 +279,9 @@ class ReaderDialog(ScreenCenteredDialog):
         self.resume.hide()
         self._install_window_resize_filter(self)
         QTimer.singleShot(0, self._layout_chrome)
-        QTimer.singleShot(0, self._initial_render)
+        # Give the native window one frame to become visible before ZIP page
+        # decoding and continuous-layout construction begin.
+        QTimer.singleShot(50, self._initial_render)
 
     def _initial_render(self) -> None:
         self.mode_changed()

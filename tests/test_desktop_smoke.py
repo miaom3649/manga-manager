@@ -362,6 +362,7 @@ def test_reader_saves_progress_only_when_done() -> None:
     dialog = ReaderDialog(work, reader)
     dialog.show()
     app.processEvents()
+    QTest.qWait(60)
 
     assert dialog.title_bar.width() < dialog.width()
     assert dialog._is_scrollbar_widget(dialog.scroll.verticalScrollBar())
