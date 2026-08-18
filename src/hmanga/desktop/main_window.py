@@ -298,7 +298,6 @@ class MainWindow(QMainWindow):
         self.search_timer.timeout.connect(self.refresh_works)
         self._catalog_revision = catalog.revision
         self._thumbnail_generation = 0
-        self._work_row_cache: dict[int, tuple[tuple[object, ...], QWidget]] = {}
         self._retired_reader: ReaderDialog | None = None
         self.sync_timer = QTimer(self)
         self.sync_timer.setInterval(500)
@@ -1279,7 +1278,6 @@ class MainWindow(QMainWindow):
         )
         self.current_page = page.page
         self.total_pages = page.pages
-        self._cache_current_work_rows()
         self.work_list.setUpdatesEnabled(False)
         self.work_list.clear()
         self._animated_movies: list[QMovie] = []
@@ -1311,53 +1309,13 @@ class MainWindow(QMainWindow):
             ]
             custom_tag_entries.sort(key=lambda entry: entry[2])
             tag_entries = [(kind, "#4f7c78"), *[entry[:2] for entry in custom_tag_entries]]
-            row_signature: tuple[object, ...] = (
-                active_language(),
-                work.kind,
-                work.file_name,
-                work.number,
-                work.title,
-                work.rating,
-                work.status,
-                work.cover_member,
-                work.fingerprint,
-                tuple((tag.id, tag.name, tag.group_id) for tag in work.tags),
-            )
             # Work content is drawn entirely by the custom row widget. Do not set
             # list-item text, or some Windows styles draw it beside the cover.
             item = QListWidgetItem()
             item.setData(Qt.UserRole, work.id)
             item.setSizeHint(QSize(0, 132))
-            cached = self._work_row_cache.pop(work.id, None)
-            if cached is not None and cached[0] == row_signature:
-                row_widget = cached[1]
-                row_widget.setStyleSheet(
-                    "QWidget#workRow { background: transparent; border: none; }"
-                )
-                self.work_list.addItem(item)
-                self.work_list.setItemWidget(item, row_widget)
-                row_widget.show()
-                cached_image = row_widget.findChild(QLabel, "workCover")
-                if cached_image is not None and not cached_image.property("thumbnailLoaded"):
-                    QTimer.singleShot(
-                        work_index * 12,
-                        partial(
-                            self._load_work_thumbnail,
-                            work,
-                            cached_image,
-                            thumbnail_generation,
-                        ),
-                    )
-                continue
-            if cached is not None:
-                cached[1].deleteLater()
             row_widget = QWidget()
             row_widget.setObjectName("workRow")
-            row_widget.setProperty("workRowSignature", row_signature)
-            row_widget.setProperty(
-                "workRowCacheable",
-                not (work.kind == "illustration" and work.file_name.casefold().endswith(".gif")),
-            )
             row_layout = QHBoxLayout(row_widget)
             row_layout.setContentsMargins(12, 7, 12, 7)
             image = QLabel()
@@ -1395,7 +1353,6 @@ class MainWindow(QMainWindow):
             self.work_list.setItemWidget(item, row_widget)
         self.work_list.setUpdatesEnabled(True)
         self.work_list.viewport().update()
-        self._trim_work_row_cache()
         if not page.items:
             self.work_list.addItem(trf("works.empty", app_name=APP_NAME))
         self.page_label.setText(
@@ -1407,27 +1364,6 @@ class MainWindow(QMainWindow):
         self.previous_page.setEnabled(page.page > 1)
         self.next_page.setEnabled(page.page < page.pages)
         self.last_page.setEnabled(page.page < page.pages)
-
-    def _cache_current_work_rows(self) -> None:
-        for index in range(self.work_list.count()):
-            item = self.work_list.item(index)
-            work_id = item.data(Qt.UserRole)
-            row_widget = self.work_list.itemWidget(item)
-            if work_id is None or row_widget is None:
-                continue
-            self.work_list.removeItemWidget(item)
-            row_widget.hide()
-            if row_widget.property("workRowCacheable"):
-                signature = row_widget.property("workRowSignature")
-                self._work_row_cache[int(work_id)] = (signature, row_widget)
-            else:
-                row_widget.deleteLater()
-
-    def _trim_work_row_cache(self) -> None:
-        while len(self._work_row_cache) > 150:
-            oldest_work_id = next(iter(self._work_row_cache))
-            _signature, widget = self._work_row_cache.pop(oldest_work_id)
-            widget.deleteLater()
 
     def _load_work_thumbnail(
         self,
