@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PIL import Image
 from PySide6.QtCore import QPoint, QSize, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 from hmanga.appearance import AppearanceService
 from hmanga.backup import BackupService
@@ -72,6 +72,16 @@ def test_library_prompt_uses_first_run_copy_only_once(tmp_path) -> None:
         == "confirm.first_library_directory_setup"
     )
     assert _consume_library_prompt_message_key(catalog) == "confirm.library_directory_unset"
+
+
+def test_floating_card_enables_native_window_transparency() -> None:
+    _app = QApplication.instance() or QApplication([])
+    parent = QWidget()
+    dialog = FloatingCardDialog(parent)
+
+    assert dialog.testAttribute(Qt.WA_TranslucentBackground)
+    dialog.close()
+    parent.close()
 
 
 def test_full_desktop_window_constructs(tmp_path) -> None:

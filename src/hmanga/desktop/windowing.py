@@ -62,6 +62,10 @@ class FloatingCardDialog(QDialog):
             parent.installEventFilter(self)
         self.setProperty("skipScreenCentering", True)
         self.setWindowFlags(Qt.SubWindow | Qt.FramelessWindowHint)
+        # A parented QDialog with SubWindow is still backed by a native window
+        # on Windows.  An rgba stylesheet alone is then painted as opaque;
+        # enable compositor-backed alpha before applying the overlay color.
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setObjectName("floatingCardOverlay")
         self.setStyleSheet(
