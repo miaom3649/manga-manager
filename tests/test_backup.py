@@ -63,6 +63,16 @@ def test_daily_backup_once_and_retention(tmp_path) -> None:
     assert len(manual.stem.split("-")) == 4
 
 
+def test_scheduled_backup_skips_until_library_is_configured(tmp_path) -> None:
+    database = Database(tmp_path / "main.db")
+    database.initialize("test")
+    library = LibraryService(database)
+    backups = BackupService(database, library)
+
+    assert backups.scheduled_if_due(datetime(2026, 8, 6, 2, 0)) is None
+    assert not (tmp_path / "config-backup").exists()
+
+
 def test_backup_leaves_no_temporary_wal_files(tmp_path) -> None:
     database = Database(tmp_path / "main.db")
     database.initialize("test")

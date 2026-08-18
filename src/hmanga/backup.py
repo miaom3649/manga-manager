@@ -142,7 +142,8 @@ class BackupService:
 
     def scheduled_if_due(self, now: datetime | None = None) -> Path | None:
         now = now or datetime.now()
-        if now.hour < 2:
+        root = self.library.library_root()
+        if now.hour < 2 or root is None or not root.is_dir():
             return None
         return self.automatic_if_due(now.date())
 
