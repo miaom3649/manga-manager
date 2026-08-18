@@ -325,12 +325,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.theme_bar)
         layout.addWidget(self.pages, 1)
         self.setCentralWidget(root)
-        self.reader_backdrop = QWidget(self)
-        self.reader_backdrop.setObjectName("readerMainBackdrop")
-        self.reader_backdrop.setStyleSheet(
-            "QWidget#readerMainBackdrop { background: #111111; border: none; }"
-        )
-        self.reader_backdrop.hide()
         self._install_window_gesture_filter(self)
         controller.scan_started.connect(self._scan_started)
         controller.scan_finished.connect(self._scan_finished)
@@ -1378,7 +1372,7 @@ class MainWindow(QMainWindow):
             not self.isVisible()
             or self.pages.currentIndex() != 0
             or self._has_visible_dialog()
-            or self.reader_backdrop.isVisible()
+            or self.windowOpacity() <= 0.01
         ):
             QTimer.singleShot(
                 120,
@@ -1474,30 +1468,31 @@ class MainWindow(QMainWindow):
             work = self.catalog.get_work(int(value))
             if work is None:
                 return
-            # Keep the expensive main-window widget tree mapped. A lightweight
-            # opaque cover provides the same visual isolation as hiding the main
-            # window without forcing Qt/Windows to remap and repaint every work
-            # row when the reader closes.
-            self.reader_backdrop.setGeometry(self.rect())
-            self.reader_backdrop.show()
-            self.reader_backdrop.raise_()
-            self.reader_backdrop.repaint()
+            # Keep the expensive main-window widget tree mapped, but make the
+            # top-level window fully transparent while reading. Restoring window
+            # opacity is much cheaper than hide()/show(), which remaps and
+            # repaints every work row on Windows.
+            self.setWindowOpacity(0.0)
+            self.setEnabled(False)
             if self._retired_reader is not None:
                 self._retired_reader.deleteLater()
                 self._retired_reader = None
-            reader_dialog = ReaderDialog(
-                work,
-                ReaderService(self.catalog.database, self.media),
-                self,
-            )
+            reader_dialog: ReaderDialog | None = None
             try:
+                reader_dialog = ReaderDialog(
+                    work,
+                    ReaderService(self.catalog.database, self.media),
+                    self,
+                )
                 reader_dialog.exec()
             finally:
                 # Keep the hidden reader alive until the next reading session.
                 # Destroying hundreds of page widgets here blocks restoration of
                 # the main window and detail card on both Windows and Linux.
-                self._retired_reader = reader_dialog
-                self.reader_backdrop.hide()
+                if reader_dialog is not None:
+                    self._retired_reader = reader_dialog
+                self.setEnabled(True)
+                self.setWindowOpacity(1.0)
                 self.raise_()
                 self.activateWindow()
 
