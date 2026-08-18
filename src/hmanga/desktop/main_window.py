@@ -7,7 +7,7 @@ import sys
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QEvent, QEventLoop, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QByteArray, QEvent, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
@@ -325,6 +325,12 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.theme_bar)
         layout.addWidget(self.pages, 1)
         self.setCentralWidget(root)
+        self.reader_backdrop = QWidget(self)
+        self.reader_backdrop.setObjectName("readerMainBackdrop")
+        self.reader_backdrop.setStyleSheet(
+            "QWidget#readerMainBackdrop { background: #111111; border: none; }"
+        )
+        self.reader_backdrop.hide()
         self._install_window_gesture_filter(self)
         controller.scan_started.connect(self._scan_started)
         controller.scan_finished.connect(self._scan_finished)
@@ -1372,6 +1378,7 @@ class MainWindow(QMainWindow):
             not self.isVisible()
             or self.pages.currentIndex() != 0
             or self._has_visible_dialog()
+            or self.reader_backdrop.isVisible()
         ):
             QTimer.singleShot(
                 120,
@@ -1444,13 +1451,6 @@ class MainWindow(QMainWindow):
         dialog = WorkDetailDialog(work_id, self.catalog, self.media, self)
         while True:
             dialog.requested_action = None
-            dialog.show()
-            app = QApplication.instance()
-            if app is not None:
-                # Paint the restored main window and existing detail card before
-                # entering another nested dialog loop. Thumbnail timers see the
-                # visible card and remain paused during this short flush.
-                app.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
             dialog.exec()
             if dialog.metadata_changed:
                 self.refresh_works()
@@ -1474,7 +1474,14 @@ class MainWindow(QMainWindow):
             work = self.catalog.get_work(int(value))
             if work is None:
                 return
-            self.hide()
+            # Keep the expensive main-window widget tree mapped. A lightweight
+            # opaque cover provides the same visual isolation as hiding the main
+            # window without forcing Qt/Windows to remap and repaint every work
+            # row when the reader closes.
+            self.reader_backdrop.setGeometry(self.rect())
+            self.reader_backdrop.show()
+            self.reader_backdrop.raise_()
+            self.reader_backdrop.repaint()
             if self._retired_reader is not None:
                 self._retired_reader.deleteLater()
                 self._retired_reader = None
@@ -1490,7 +1497,7 @@ class MainWindow(QMainWindow):
                 # Destroying hundreds of page widgets here blocks restoration of
                 # the main window and detail card on both Windows and Linux.
                 self._retired_reader = reader_dialog
-                self.show()
+                self.reader_backdrop.hide()
                 self.raise_()
                 self.activateWindow()
 
