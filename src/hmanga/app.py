@@ -140,7 +140,7 @@ def run() -> int:
     app.aboutToQuit.connect(cleanup)
     window.show()
     if library.library_root() is None:
-        QTimer.singleShot(0, window.choose_root)
+        QTimer.singleShot(0, window.prompt_for_library_root)
     else:
         controller.start()
     backup_timer = QTimer(app)

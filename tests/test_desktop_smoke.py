@@ -20,7 +20,11 @@ from hmanga.catalog import CatalogQuery, CatalogService
 from hmanga.controller import LibraryController
 from hmanga.database import Database, Notification
 from hmanga.desktop.dialogs import WorkDetailDialog
-from hmanga.desktop.main_window import MainWindow, TagSummaryWidget
+from hmanga.desktop.main_window import (
+    MainWindow,
+    TagSummaryWidget,
+    _consume_library_prompt_message_key,
+)
 from hmanga.desktop.reader_dialog import ReaderDialog
 from hmanga.desktop.tag_widgets import AUTHOR_TAG_COLOR
 from hmanga.desktop.windowing import FloatingCardDialog, ScreenCenteredDialog
@@ -56,6 +60,18 @@ class FakeReader:
 
     def save_progress(self, work, page_index: int, page_offset: int = 0) -> None:
         self.saved.append((page_index, page_offset))
+
+
+def test_library_prompt_uses_first_run_copy_only_once(tmp_path) -> None:
+    database = Database(tmp_path / "main.db")
+    database.initialize("test")
+    catalog = CatalogService(database)
+
+    assert (
+        _consume_library_prompt_message_key(catalog)
+        == "confirm.first_library_directory_setup"
+    )
+    assert _consume_library_prompt_message_key(catalog) == "confirm.library_directory_unset"
 
 
 def test_full_desktop_window_constructs(tmp_path) -> None:

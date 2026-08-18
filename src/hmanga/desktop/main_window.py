@@ -91,6 +91,16 @@ from hmanga.pairing import PairingService
 from hmanga.reader import ReaderService
 from hmanga.upload import UploadService
 
+INITIAL_LIBRARY_PROMPT_SHOWN = "initial_library_prompt_shown"
+
+
+def _consume_library_prompt_message_key(catalog: CatalogService) -> str:
+    """Return the appropriate unset-library prompt and remember first display."""
+    if catalog.setting(INITIAL_LIBRARY_PROMPT_SHOWN, "0") == "1":
+        return "confirm.library_directory_unset"
+    catalog.set_setting(INITIAL_LIBRARY_PROMPT_SHOWN, "1")
+    return "confirm.first_library_directory_setup"
+
 
 class TagSummaryWidget(QWidget):
     """Show as many chips as fit, followed by a compact +N summary."""
@@ -953,6 +963,19 @@ class MainWindow(QMainWindow):
         if selected:
             self.controller.configure_root(Path(selected))
             self.refresh()
+
+    def prompt_for_library_root(self) -> None:
+        """Ask before opening the native directory picker on startup."""
+        if self.library.library_root() is not None:
+            return
+        message_key = _consume_library_prompt_message_key(self.catalog)
+        if confirm_action(
+            self,
+            tr("label.set_library_directory"),
+            tr(message_key),
+            confirm_text=tr("action.set_directory"),
+        ):
+            self.choose_root()
 
     def open_pairing(self) -> None:
         PairingDialog(self.pairing, self).exec()
